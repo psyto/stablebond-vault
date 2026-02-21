@@ -1,0 +1,30 @@
+[toolchain]
+anchor_version = "0.32.1"
+solana_version = "2.1.0"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+stablebond_core = "3fnWkVPz51AJjYodQY5VCzteD5enRmkWBTsu3gPedaYs"
+stablebond_yield = "DLFUfzV4iqCzxmmXmCpR7qH6nhvPSLUekq7JCezV1LeE"
+
+[programs.localnet]
+stablebond_core = "3fnWkVPz51AJjYodQY5VCzteD5enRmkWBTsu3gPedaYs"
+stablebond_yield = "DLFUfzV4iqCzxmmXmCpR7qH6nhvPSLUekq7JCezV1LeE"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "NODE_OPTIONS='--no-experimental-strip-types' npx ts-mocha -p ./tsconfig.json -t 1000000 --reporter spec tests/*.ts"
+
+[test]
+startup_wait = 5000
+
+[test.validator]

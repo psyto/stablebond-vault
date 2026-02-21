@@ -1,0 +1,13 @@
+{
+  "name": "@stablebond/types",
+  "version": "0.1.0",
+  "description": "Shared TypeScript types for the Stablebond Protocol",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@solana/web3.js": "^1.95.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

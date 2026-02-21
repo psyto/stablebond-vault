@@ -1,0 +1,22 @@
+[package]
+name = "stablebond-yield"
+version = "0.1.0"
+edition = "2021"
+description = "Stablebond Yield Vault — Generalized multi-sovereign bond vault with NAV-based share accounting"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "stablebond_yield"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+anchor-spl = { workspace = true }
+stablebond-types = { path = "../../crates/stablebond-types" }

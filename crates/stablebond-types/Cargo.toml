@@ -1,0 +1,8 @@
+[package]
+name = "stablebond-types"
+version = "0.1.0"
+edition = "2021"
+description = "Shared types for the Stablebond Protocol — multi-sovereign bond vault"
+
+[dependencies]
+anchor-lang = { workspace = true }

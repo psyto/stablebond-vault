@@ -1,0 +1,23 @@
+[package]
+name = "stablebond-core"
+version = "0.1.0"
+edition = "2021"
+description = "Stablebond Core Protocol — Multi-sovereign bond vault with cross-currency conversion + yield allocation"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "stablebond_core"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+anchor-spl = { workspace = true }
+stablebond-types = { path = "../../crates/stablebond-types" }
+stablebond-yield = { path = "../stablebond-yield", features = ["cpi"] }
