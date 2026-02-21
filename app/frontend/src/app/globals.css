@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --surface-0: #0a0a0f;
+    --surface-1: #12121a;
+    --surface-2: #1a1a26;
+    --surface-3: #222233;
+    --accent-blue: #3b82f6;
+    --accent-green: #22c55e;
+    --accent-red: #ef4444;
+    --accent-amber: #f59e0b;
+    --tier-bronze: #CD7F32;
+    --tier-silver: #C0C0C0;
+    --tier-gold: #FFD700;
+    --tier-diamond: #B9F2FF;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-surface-0 text-gray-100 antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-surface-3 bg-surface-1 p-6;
+  }
+
+  .btn-primary {
+    @apply rounded-lg bg-accent-blue px-4 py-2 font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply rounded-lg border border-surface-3 bg-surface-2 px-4 py-2 font-medium text-gray-300 transition-colors hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .input-field {
+    @apply w-full rounded-lg border border-surface-3 bg-surface-2 px-4 py-3 font-mono text-white placeholder-gray-500 outline-none transition-colors focus:border-accent-blue;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded bg-surface-2;
+  }
+}
+
+/* Wallet adapter overrides */
+.wallet-adapter-button {
+  @apply !rounded-lg !bg-accent-blue !font-sans !text-sm !font-medium;
+}
+
+.wallet-adapter-modal-wrapper {
+  @apply !bg-surface-1;
+}
