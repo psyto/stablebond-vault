@@ -11,7 +11,8 @@
     "@stablebond/types": "workspace:*",
     "@complr/sdk": "file:../../../../complr/sdk",
     "@accredit/sdk": "file:../../../../accredit/packages/sdk",
-    "@accredit/types": "file:../../../../accredit/packages/types"
+    "@accredit/types": "file:../../../../accredit/packages/types",
+    "@stratum/core": "file:../../../../stratum/packages/core"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
