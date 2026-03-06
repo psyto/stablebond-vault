@@ -114,6 +114,25 @@ import { validateDeposit, getRemainingCapacity } from "@stablebond/sdk";
 const error = validateDeposit(Tier.Silver, BondType.MxCetes, amount, monthlyDeposited);
 ```
 
+## Compliance
+
+Identity verification and sanctions screening are integrated into the deposit flow.
+
+**Dependencies:**
+
+| Package | Purpose |
+|---|---|
+| `@accredit/sdk` | On-chain KYC / identity verification |
+| `@accredit/types` | Shared types for Accredit identity primitives |
+| `@complr/sdk` | Off-chain sanctions & PEP screening |
+
+**Compliance utility** (`packages/sdk/src/lib/compliance.ts`) exposes two helpers:
+
+- `screenWallet(address)` — Pre-deposit sanctions/PEP check via Complr. Returns `allowed`, `riskLevel`, `sanctions`, and `flags`. Wallets flagged as `critical`, `high`, or sanctioned are rejected.
+- `checkDepositCompliance({ transactionId, depositorWallet, vaultWallet, amount, currency })` — Post-deposit transaction compliance check. Returns `compliant`, `status`, and `actionItems`.
+
+Requires the `COMPLR_API_KEY` environment variable.
+
 ## Keeper Bots
 
 Two automated bots in `packages/sdk/src/keeper/`:
