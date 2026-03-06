@@ -133,6 +133,24 @@ Identity verification and sanctions screening are integrated into the deposit fl
 
 Requires the `COMPLR_API_KEY` environment variable.
 
+## Stratum Integration
+
+Compact data structures from `@stratum/core` for tier verification, deposit tracking, and bond auditing.
+
+**Dependency:**
+
+| Package | Purpose |
+|---|---|
+| `@stratum/core` | MerkleTree and Bitfield primitives |
+
+**Stratum utilities** (`packages/sdk/src/lib/stratum-utils.ts`):
+
+- `buildTierMembershipTree(depositors)` — Build a MerkleTree over tier-verified depositors. Each leaf encodes `wallet:tier:monthlyLimit`, enabling compact on-chain proof of tier membership without loading all user position PDAs.
+- `getTierProof(tree, wallet, tier, monthlyLimit)` — Generate a merkle proof for a single depositor's tier. Returns `proof`, `root`, and `index`.
+- `createMonthlyDepositTracker(depositorCount)` — Create a Bitfield to track which depositors have deposited this month. One bit per depositor slot (10,000 depositors = 1.25 KB).
+- `restoreDepositTracker(data)` — Restore a Bitfield from previously stored bytes.
+- `buildBondRegistryTree(bonds)` — Build a MerkleTree of registered bond types for proof-of-reserve auditing. Each leaf encodes `bondType:issuer:maturityDate:yieldBps`.
+
 ## Keeper Bots
 
 Two automated bots in `packages/sdk/src/keeper/`:
