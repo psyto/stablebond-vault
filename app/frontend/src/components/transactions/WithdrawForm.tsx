@@ -10,14 +10,14 @@ import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
 interface WithdrawFormProps {
   position: UserPosition | null;
   navPerShare: bigint;
-  onWithdraw: (shares: bigint) => Promise<void>;
+  onRequestWithdrawal: (shares: bigint) => Promise<void>;
   loading: boolean;
 }
 
 export function WithdrawForm({
   position,
   navPerShare,
-  onWithdraw,
+  onRequestWithdrawal,
   loading,
 }: WithdrawFormProps) {
   const { connected } = useWallet();
@@ -39,13 +39,17 @@ export function WithdrawForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (sharesMinor === 0n || error) return;
-    await onWithdraw(sharesMinor);
+    await onRequestWithdrawal(sharesMinor);
     setShares("");
   };
 
   return (
     <form onSubmit={handleSubmit} className="card">
       <h3 className="mb-4 text-lg font-semibold text-white">Withdraw</h3>
+      <p className="mb-4 text-xs text-gray-500">
+        Withdrawals use a cooldown period. Request now, claim after the cooldown
+        expires.
+      </p>
 
       <div className="space-y-4">
         <AmountInput
@@ -60,7 +64,7 @@ export function WithdrawForm({
         {sharesMinor > 0n && !error && (
           <div className="rounded-lg bg-surface-2 p-3 text-sm">
             <div className="flex justify-between text-gray-400">
-              <span>Value</span>
+              <span>Estimated Value</span>
               <span className="font-mono text-white">
                 ${formatAmount(valuePreview)}
               </span>
@@ -75,7 +79,11 @@ export function WithdrawForm({
           }
           className="btn-secondary w-full"
         >
-          {loading ? <LoadingSpinner className="mx-auto" /> : "Withdraw"}
+          {loading ? (
+            <LoadingSpinner className="mx-auto" />
+          ) : (
+            "Request Withdrawal"
+          )}
         </button>
       </div>
     </form>

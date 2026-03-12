@@ -7,13 +7,15 @@ import { ApyBadge } from "@/components/yield/ApyBadge";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { bpsToPercent, timestampToDate } from "@/lib/formatters";
 import type { BondVault } from "@/hooks/useBondVault";
+import type { BondVaultExtended } from "@stablebond/sdk";
 
 interface BondDetailHeaderProps {
   bond: BondConfig;
   vault: BondVault | null;
+  vaultExtended?: BondVaultExtended | null;
 }
 
-export function BondDetailHeader({ bond, vault }: BondDetailHeaderProps) {
+export function BondDetailHeader({ bond, vault, vaultExtended }: BondDetailHeaderProps) {
   const label = BOND_TYPE_LABELS[bond.bondType] ?? "Custom Bond";
   const currency = BOND_CURRENCIES[bond.bondType] ?? "USD";
 
@@ -24,7 +26,10 @@ export function BondDetailHeader({ bond, vault }: BondDetailHeaderProps) {
         <span className="rounded bg-surface-2 px-2 py-0.5 text-sm text-gray-300">
           {currency}
         </span>
-        <ApyBadge apyBps={vault?.targetApyBps ?? bond.defaultApyBps} />
+        <ApyBadge
+          apyBps={vault?.targetApyBps ?? bond.defaultApyBps}
+          oracleEnabled={vaultExtended?.oracleEnabled}
+        />
         <TierBadge tier={bond.minTier as Tier} />
         <span
           className={`ml-auto inline-block h-2.5 w-2.5 rounded-full ${

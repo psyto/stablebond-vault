@@ -13,6 +13,10 @@ interface WithdrawAccounts {
   userToken: PublicKey;
 }
 
+/**
+ * @deprecated Use useWithdrawalRequests() instead for the request/claim flow.
+ * This hook calls the legacy immediate withdraw.
+ */
 export function useWithdraw() {
   const client = useStablebondClient();
   const { addToast } = useToast();

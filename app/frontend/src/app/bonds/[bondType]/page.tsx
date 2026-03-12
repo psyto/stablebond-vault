@@ -6,9 +6,10 @@ import { BondType } from "@stablebond/types";
 import { useProtocol } from "@/providers/ProtocolProvider";
 import { useUserPosition } from "@/hooks/useUserPosition";
 import { useBondVault } from "@/hooks/useBondVault";
+import { useBondVaultExtended } from "@/hooks/useBondVaultExtended";
 import { usePendingDeposits } from "@/hooks/usePendingDeposits";
 import { useDeposit } from "@/hooks/useDeposit";
-import { useWithdraw } from "@/hooks/useWithdraw";
+import { useWithdrawalRequests } from "@/hooks/useWithdrawalRequests";
 import { useClaimYield } from "@/hooks/useClaimYield";
 import { BondDetailHeader } from "@/components/bonds/BondDetailHeader";
 import { DepositForm } from "@/components/transactions/DepositForm";
@@ -16,6 +17,8 @@ import { WithdrawForm } from "@/components/transactions/WithdrawForm";
 import { ClaimYieldButton } from "@/components/transactions/ClaimYieldButton";
 import { TransactionStatus } from "@/components/transactions/TransactionStatus";
 import { PendingDepositsCard } from "@/components/dashboard/PendingDepositsCard";
+import { WithdrawalRequestsCard } from "@/components/dashboard/WithdrawalRequestsCard";
+import { ReserveCoverageIndicator } from "@/components/yield/ReserveCoverageIndicator";
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { StatCard } from "@/components/shared/StatCard";
@@ -31,9 +34,17 @@ export default function BondDetailPage() {
   const bond = bonds.find((b) => b.bondType === bondType);
   const { position, loading: posLoading } = useUserPosition(bondType);
   const { vault, loading: vaultLoading } = useBondVault(bondType);
+  const { vault: vaultExtended } = useBondVaultExtended(bondType);
   const { deposits } = usePendingDeposits(bondType);
   const { deposit, loading: depositLoading, txSignature: depositTx } = useDeposit();
-  const { withdraw, loading: withdrawLoading, txSignature: withdrawTx } = useWithdraw();
+  const {
+    requests: withdrawalRequests,
+    actionLoading: withdrawLoading,
+    txSignature: withdrawTx,
+    requestWithdrawal,
+    claimWithdrawal,
+    cancelWithdrawal,
+  } = useWithdrawalRequests(bondType);
   const { claim, loading: claimLoading, txSignature: claimTx } = useClaimYield();
 
   const nav = vault?.navPerShare ?? 1_000_000n;
@@ -58,8 +69,6 @@ export default function BondDetailPage() {
     : 0n;
 
   const handleDeposit = async (amount: bigint) => {
-    // Account derivation is handled inside the SDK client
-    // For a full implementation, these would be derived from the bond config
     await deposit(amount, bondType, {
       yieldSourceMint: bond.currencyMint,
       userToken: PublicKey.default,
@@ -69,11 +78,25 @@ export default function BondDetailPage() {
     });
   };
 
-  const handleWithdraw = async (shares: bigint) => {
-    await withdraw(shares, bondType, {
+  const handleRequestWithdrawal = async (shares: bigint) => {
+    await requestWithdrawal(shares, {
       yieldSourceMint: bond.currencyMint,
       depositVault: PublicKey.default,
       userToken: PublicKey.default,
+    });
+  };
+
+  const handleClaimWithdrawal = async (nonce: bigint) => {
+    await claimWithdrawal(nonce, {
+      yieldSourceMint: bond.currencyMint,
+      depositVault: PublicKey.default,
+      userToken: PublicKey.default,
+    });
+  };
+
+  const handleCancelWithdrawal = async (nonce: bigint) => {
+    await cancelWithdrawal(nonce, {
+      yieldSourceMint: bond.currencyMint,
     });
   };
 
@@ -87,7 +110,9 @@ export default function BondDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BondDetailHeader bond={bond} vault={vault} />
+      <BondDetailHeader bond={bond} vault={vault} vaultExtended={vaultExtended} />
+
+      {vaultExtended && <ReserveCoverageIndicator vault={vaultExtended} />}
 
       {connected && position && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -123,7 +148,13 @@ export default function BondDetailPage() {
           <WithdrawForm
             position={position}
             navPerShare={nav}
-            onWithdraw={handleWithdraw}
+            onRequestWithdrawal={handleRequestWithdrawal}
+            loading={withdrawLoading}
+          />
+          <WithdrawalRequestsCard
+            requests={withdrawalRequests}
+            onClaim={handleClaimWithdrawal}
+            onCancel={handleCancelWithdrawal}
             loading={withdrawLoading}
           />
           <ClaimYieldButton

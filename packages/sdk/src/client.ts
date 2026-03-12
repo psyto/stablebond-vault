@@ -18,7 +18,48 @@ import {
   findPendingDepositPda,
   findUsdcVaultPda,
   findBondVaultPda,
+  findWithdrawalRequestPda,
 } from "./pda";
+
+export interface WithdrawalRequest {
+  user: PublicKey;
+  protocolConfig: PublicKey;
+  bondType: BondType;
+  shares: bigint;
+  amountOut: bigint;
+  requestedAt: bigint;
+  claimableAt: bigint;
+  isClaimed: boolean;
+  isCancelled: boolean;
+  nonce: bigint;
+  bump: number;
+}
+
+export interface BondVaultExtended {
+  authority: PublicKey;
+  currencyMint: PublicKey;
+  shareMint: PublicKey;
+  currencyVault: PublicKey;
+  bondType: BondType;
+  couponRateBps: number;
+  maturityDate: bigint;
+  targetApyBps: number;
+  totalDeposits: bigint;
+  totalShares: bigint;
+  navPerShare: bigint;
+  lastAccrual: bigint;
+  isActive: boolean;
+  bump: number;
+  shareMintBump: number;
+  vaultBump: number;
+  oracleFeed: PublicKey;
+  lastOraclePrice: bigint;
+  oracleEnabled: boolean;
+  reserveAttestor: PublicKey;
+  lastAttestationAt: bigint;
+  attestedReserve: bigint;
+  attestationMaxStaleness: bigint;
+}
 
 export interface StablebondProgramIds {
   core: PublicKey;
@@ -153,7 +194,206 @@ export class StablebondClient {
     return this.deserializeBondVault(info.data);
   }
 
+  // ─── Withdrawal Request Methods ─────────────────────────────────────────────
+
+  /**
+   * Fetch all withdrawal requests for a user across all nonces.
+   * Scans the last 20 nonces from the user's position.
+   */
+  async getWithdrawalRequests(
+    user: PublicKey,
+    bondType: BondType
+  ): Promise<WithdrawalRequest[]> {
+    const position = await this.getUserPosition(user, bondType);
+    if (!position) return [];
+
+    const requests: WithdrawalRequest[] = [];
+    const nonce = position.withdrawalCount;
+
+    const start = nonce > 20 ? nonce - 20 : 0;
+    for (let i = start; i < nonce; i++) {
+      const [pda] = findWithdrawalRequestPda(
+        this.configPda,
+        user,
+        BigInt(i),
+        this.programIds.core
+      );
+      const info = await this.connection.getAccountInfo(pda);
+      if (info) {
+        const req = this.deserializeWithdrawalRequest(info.data);
+        if (req && !req.isClaimed && !req.isCancelled) {
+          requests.push(req);
+        }
+      }
+    }
+
+    return requests;
+  }
+
+  /** Get the extended bond vault data including oracle and attestation fields. */
+  async getBondVaultExtended(bondType: BondType): Promise<BondVaultExtended | null> {
+    const config = await this.getProtocolConfig();
+    if (!config) return null;
+
+    const [vaultPda] = findBondVaultPda(
+      config.authority,
+      bondType,
+      this.programIds.yield
+    );
+    const info = await this.connection.getAccountInfo(vaultPda);
+    if (!info) return null;
+
+    return this.deserializeBondVaultExtended(info.data);
+  }
+
   // ─── Transaction Methods ─────────────────────────────────────────────────────
+
+  /**
+   * Request a withdrawal with cooldown period.
+   * This is the recommended withdrawal path (replaces legacy immediate withdraw).
+   */
+  async requestWithdrawal(
+    shares: BN,
+    bondType: BondType,
+    accounts: {
+      yieldSourceMint: PublicKey;
+      depositVault: PublicKey;
+      userToken: PublicKey;
+    }
+  ): Promise<string> {
+    const user = this.provider.wallet.publicKey;
+    const [yieldSourcePda] = findYieldSourcePda(
+      this.configPda,
+      accounts.yieldSourceMint,
+      this.programIds.core
+    );
+    const [userPositionPda] = findUserPositionPda(
+      this.configPda,
+      user,
+      bondType,
+      this.programIds.core
+    );
+
+    const position = await this.getUserPosition(user, bondType);
+    const nonce = BigInt(position?.withdrawalCount ?? 0);
+    const [withdrawalRequestPda] = findWithdrawalRequestPda(
+      this.configPda,
+      user,
+      nonce,
+      this.programIds.core
+    );
+
+    const program = this.getCoreProgram();
+    const tx = await program.methods
+      .requestWithdrawal(
+        shares,
+        { [BondType[bondType].charAt(0).toLowerCase() + BondType[bondType].slice(1)]: {} }
+      )
+      .accounts({
+        user,
+        protocolConfig: this.configPda,
+        yieldSource: yieldSourcePda,
+        userPosition: userPositionPda,
+        withdrawalRequest: withdrawalRequestPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    return tx;
+  }
+
+  /**
+   * Claim a matured withdrawal request (after cooldown period has passed).
+   */
+  async claimWithdrawal(
+    nonce: bigint,
+    bondType: BondType,
+    accounts: {
+      yieldSourceMint: PublicKey;
+      depositVault: PublicKey;
+      userToken: PublicKey;
+    }
+  ): Promise<string> {
+    const user = this.provider.wallet.publicKey;
+    const [yieldSourcePda] = findYieldSourcePda(
+      this.configPda,
+      accounts.yieldSourceMint,
+      this.programIds.core
+    );
+    const [userPositionPda] = findUserPositionPda(
+      this.configPda,
+      user,
+      bondType,
+      this.programIds.core
+    );
+    const [withdrawalRequestPda] = findWithdrawalRequestPda(
+      this.configPda,
+      user,
+      nonce,
+      this.programIds.core
+    );
+
+    const program = this.getCoreProgram();
+    const tx = await program.methods
+      .claimWithdrawal()
+      .accounts({
+        user,
+        protocolConfig: this.configPda,
+        yieldSource: yieldSourcePda,
+        userPosition: userPositionPda,
+        withdrawalRequest: withdrawalRequestPda,
+        depositVault: accounts.depositVault,
+        userToken: accounts.userToken,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    return tx;
+  }
+
+  /**
+   * Cancel a pending withdrawal request (before cooldown expires).
+   */
+  async cancelWithdrawal(
+    nonce: bigint,
+    bondType: BondType,
+    accounts: {
+      yieldSourceMint: PublicKey;
+    }
+  ): Promise<string> {
+    const user = this.provider.wallet.publicKey;
+    const [yieldSourcePda] = findYieldSourcePda(
+      this.configPda,
+      accounts.yieldSourceMint,
+      this.programIds.core
+    );
+    const [userPositionPda] = findUserPositionPda(
+      this.configPda,
+      user,
+      bondType,
+      this.programIds.core
+    );
+    const [withdrawalRequestPda] = findWithdrawalRequestPda(
+      this.configPda,
+      user,
+      nonce,
+      this.programIds.core
+    );
+
+    const program = this.getCoreProgram();
+    const tx = await program.methods
+      .cancelWithdrawal()
+      .accounts({
+        user,
+        protocolConfig: this.configPda,
+        yieldSource: yieldSourcePda,
+        userPosition: userPositionPda,
+        withdrawalRequest: withdrawalRequestPda,
+      })
+      .rpc();
+
+    return tx;
+  }
 
   async depositDirect(
     amount: BN,
@@ -199,6 +439,10 @@ export class StablebondClient {
     return tx;
   }
 
+  /**
+   * @deprecated Use requestWithdrawal() + claimWithdrawal() instead.
+   * Legacy immediate withdraw — may be gated or removed in future versions.
+   */
   async withdraw(
     shares: BN,
     bondType: BondType,
@@ -628,6 +872,120 @@ export class StablebondClient {
       navPerShare,
       lastAccrual,
       isActive,
+    };
+  }
+
+  private deserializeBondVaultExtended(data: Buffer): BondVaultExtended {
+    let offset = 8;
+    const authority = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const currencyMint = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const shareMint = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const currencyVault = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const bondType = data[offset] as BondType;
+    offset += 1;
+    const couponRateBps = data.readUInt16LE(offset);
+    offset += 2;
+    const maturityDate = data.readBigInt64LE(offset);
+    offset += 8;
+    const targetApyBps = data.readUInt16LE(offset);
+    offset += 2;
+    const totalDeposits = data.readBigUInt64LE(offset);
+    offset += 8;
+    const totalShares = data.readBigUInt64LE(offset);
+    offset += 8;
+    const navPerShare = data.readBigUInt64LE(offset);
+    offset += 8;
+    const lastAccrual = data.readBigInt64LE(offset);
+    offset += 8;
+    const isActive = data[offset] !== 0;
+    offset += 1;
+    const bump = data[offset];
+    offset += 1;
+    const shareMintBump = data[offset];
+    offset += 1;
+    const vaultBump = data[offset];
+    offset += 1;
+    const oracleFeed = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const lastOraclePrice = data.readBigUInt64LE(offset);
+    offset += 8;
+    const oracleEnabled = data[offset] !== 0;
+    offset += 1;
+    const reserveAttestor = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const lastAttestationAt = data.readBigInt64LE(offset);
+    offset += 8;
+    const attestedReserve = data.readBigUInt64LE(offset);
+    offset += 8;
+    const attestationMaxStaleness = data.readBigInt64LE(offset);
+
+    return {
+      authority,
+      currencyMint,
+      shareMint,
+      currencyVault,
+      bondType,
+      couponRateBps,
+      maturityDate,
+      targetApyBps,
+      totalDeposits,
+      totalShares,
+      navPerShare,
+      lastAccrual,
+      isActive,
+      bump,
+      shareMintBump,
+      vaultBump,
+      oracleFeed,
+      lastOraclePrice,
+      oracleEnabled,
+      reserveAttestor,
+      lastAttestationAt,
+      attestedReserve,
+      attestationMaxStaleness,
+    };
+  }
+
+  private deserializeWithdrawalRequest(data: Buffer): WithdrawalRequest {
+    let offset = 8;
+    const user = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const protocolConfig = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const bondType = data[offset] as BondType;
+    offset += 1;
+    const shares = data.readBigUInt64LE(offset);
+    offset += 8;
+    const amountOut = data.readBigUInt64LE(offset);
+    offset += 8;
+    const requestedAt = data.readBigInt64LE(offset);
+    offset += 8;
+    const claimableAt = data.readBigInt64LE(offset);
+    offset += 8;
+    const isClaimed = data[offset] !== 0;
+    offset += 1;
+    const isCancelled = data[offset] !== 0;
+    offset += 1;
+    const nonce = data.readBigUInt64LE(offset);
+    offset += 8;
+    const bump = data[offset];
+
+    return {
+      user,
+      protocolConfig,
+      bondType,
+      shares,
+      amountOut,
+      requestedAt,
+      claimableAt,
+      isClaimed,
+      isCancelled,
+      nonce,
+      bump,
     };
   }
 }
