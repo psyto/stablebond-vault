@@ -147,6 +147,20 @@ export function findUserSharesPda(
   );
 }
 
+export function findWithdrawalRequestPda(
+  config: PublicKey,
+  user: PublicKey,
+  nonce: bigint,
+  programId: PublicKey
+): [PublicKey, number] {
+  const nonceBuffer = Buffer.alloc(8);
+  nonceBuffer.writeBigUInt64LE(nonce);
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("withdrawal_request"), config.toBuffer(), user.toBuffer(), nonceBuffer],
+    programId
+  );
+}
+
 // ─── Test fixtures ──────────────────────────────────────────────────────────
 
 export interface TestContext {

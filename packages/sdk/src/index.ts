@@ -10,4 +10,13 @@ export {
   createMonthlyDepositTracker,
   restoreDepositTracker,
   buildBondRegistryTree,
+  buildProofOfReserveTree,
+  getReserveProof,
+  verifyReserveCoverage,
 } from "./lib/stratum-utils";
+export {
+  oracleDerivedApyBps,
+  estimateOracleAccrual,
+  withdrawalCooldownSeconds,
+  BondTypeEnum,
+} from "./utils/yield-math";
