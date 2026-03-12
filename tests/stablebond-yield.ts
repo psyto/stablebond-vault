@@ -200,6 +200,16 @@ describe("stablebond-yield", () => {
         shareMintPda,
         ctx.user.publicKey
       );
+
+      // Enable immediate withdraw for legacy withdraw tests
+      await program.methods
+        .setImmediateWithdraw(true)
+        .accounts({
+          authority: ctx.authority.publicKey,
+          vaultConfig: vaultPda,
+        })
+        .signers([ctx.authority])
+        .rpc();
     });
 
     it("deposits USDC and receives shares at 1:1 NAV", async () => {

@@ -521,6 +521,105 @@ export class StablebondClient {
     return tx;
   }
 
+  // ─── Yield Program Admin Methods ────────────────────────────────────────────
+
+  private yieldProgram: Program | null = null;
+
+  /** Attach a loaded yield program instance for admin operations. */
+  withYieldProgram(program: Program): StablebondClient {
+    this.yieldProgram = program;
+    return this;
+  }
+
+  private getYieldProgram(): Program {
+    if (!this.yieldProgram) {
+      throw new Error(
+        "Yield program not initialized — call StablebondClient.withYieldProgram()"
+      );
+    }
+    return this.yieldProgram;
+  }
+
+  /**
+   * Admin: configure oracle feed for a bond vault.
+   */
+  async configureOracle(
+    bondType: BondType,
+    oracleFeed: PublicKey,
+    enabled: boolean
+  ): Promise<string> {
+    const config = await this.getProtocolConfig();
+    if (!config) throw new Error("Protocol config not found");
+
+    const [bondVaultPda] = findBondVaultPda(
+      config.authority,
+      bondType,
+      this.programIds.yield
+    );
+
+    const program = this.getYieldProgram();
+    return program.methods
+      .configureOracle(oracleFeed, enabled)
+      .accounts({
+        authority: this.provider.wallet.publicKey,
+        vaultConfig: bondVaultPda,
+      })
+      .rpc();
+  }
+
+  /**
+   * Admin: configure reserve attestor for a bond vault.
+   */
+  async configureReserveAttestor(
+    bondType: BondType,
+    attestor: PublicKey,
+    maxStaleness: BN
+  ): Promise<string> {
+    const config = await this.getProtocolConfig();
+    if (!config) throw new Error("Protocol config not found");
+
+    const [bondVaultPda] = findBondVaultPda(
+      config.authority,
+      bondType,
+      this.programIds.yield
+    );
+
+    const program = this.getYieldProgram();
+    return program.methods
+      .configureReserveAttestor(attestor, maxStaleness)
+      .accounts({
+        authority: this.provider.wallet.publicKey,
+        vaultConfig: bondVaultPda,
+      })
+      .rpc();
+  }
+
+  /**
+   * Admin: toggle legacy immediate withdraw on a bond vault.
+   */
+  async setImmediateWithdraw(
+    bondType: BondType,
+    allow: boolean
+  ): Promise<string> {
+    const config = await this.getProtocolConfig();
+    if (!config) throw new Error("Protocol config not found");
+
+    const [bondVaultPda] = findBondVaultPda(
+      config.authority,
+      bondType,
+      this.programIds.yield
+    );
+
+    const program = this.getYieldProgram();
+    return program.methods
+      .setImmediateWithdraw(allow)
+      .accounts({
+        authority: this.provider.wallet.publicKey,
+        vaultConfig: bondVaultPda,
+      })
+      .rpc();
+  }
+
   // ─── Private Helpers ─────────────────────────────────────────────────────────
 
   private getCoreProgram(): Program {

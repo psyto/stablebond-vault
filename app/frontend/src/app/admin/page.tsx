@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import type { YieldSourceAccount } from "@stablebond/types";
+import { PublicKey } from "@solana/web3.js";
+import { BN } from "@coral-xyz/anchor";
+import type { YieldSourceAccount, BondType } from "@stablebond/types";
 import type { BondVaultExtended } from "@stablebond/sdk";
 import { useProtocol } from "@/providers/ProtocolProvider";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -125,10 +127,9 @@ export default function AdminPage() {
   ) => {
     setActionLoading(true);
     try {
-      addToast(
-        "info",
-        `Oracle ${enabled ? "enabled" : "disabled"} for bond type ${bondType} — submit tx via program.methods.configureOracle()`
-      );
+      const feedKey = new PublicKey(oracleFeed);
+      await client.configureOracle(bondType as BondType, feedKey, enabled);
+      addToast("success", `Oracle ${enabled ? "enabled" : "disabled"} for bond type ${bondType}`);
       await fetchData();
     } catch (e: any) {
       addToast("error", e.message ?? "Failed to configure oracle");
@@ -144,10 +145,13 @@ export default function AdminPage() {
   ) => {
     setActionLoading(true);
     try {
-      addToast(
-        "info",
-        `Attestor configured for bond type ${bondType} — submit tx via program.methods.configureReserveAttestor()`
+      const attestorKey = new PublicKey(attestor);
+      await client.configureReserveAttestor(
+        bondType as BondType,
+        attestorKey,
+        new BN(maxStaleness)
       );
+      addToast("success", `Attestor configured for bond type ${bondType}`);
       await fetchData();
     } catch (e: any) {
       addToast("error", e.message ?? "Failed to configure attestor");
@@ -162,10 +166,8 @@ export default function AdminPage() {
   ) => {
     setActionLoading(true);
     try {
-      addToast(
-        "info",
-        `Immediate withdraw ${allow ? "enabled" : "disabled"} for bond type ${bondType} — submit tx via program.methods.setImmediateWithdraw()`
-      );
+      await client.setImmediateWithdraw(bondType as BondType, allow);
+      addToast("success", `Immediate withdraw ${allow ? "enabled" : "disabled"} for bond type ${bondType}`);
       await fetchData();
     } catch (e: any) {
       addToast("error", e.message ?? "Failed to toggle immediate withdraw");
