@@ -102,6 +102,7 @@ export class NavUpdater {
 
   /**
    * Call accrueYield on the stablebond-yield program for a specific bond vault.
+   * Now passes the bond price oracle account for oracle-driven NAV calculation.
    */
   private async accrueYield(bond: BondConfig): Promise<void> {
     const [configPda] = findProtocolConfigPda(this.coreProgramId);
@@ -118,25 +119,31 @@ export class NavUpdater {
       bond.bondType,
       this.yieldProgramId
     );
-    const [shareMintPda] = findBondShareMintPda(
-      authority,
-      bond.bondType,
-      this.yieldProgramId
-    );
-    const [currencyVaultPda] = findBondCurrencyVaultPda(
-      authority,
-      bond.bondType,
-      this.yieldProgramId
+
+    // Read BondVault to get oracle_feed address
+    // oracle_feed is after the original fields at the new offset
+    const vaultInfo = await this.connection.getAccountInfo(bondVaultPda);
+    if (!vaultInfo) {
+      console.warn(
+        `[NavUpdater] Bond vault not found for ${BondType[bond.bondType]}, skipping`
+      );
+      return;
+    }
+
+    // oracle_feed offset: after original fields (discriminator 8 + authority 32 + currency_mint 32
+    // + share_mint 32 + currency_vault 32 + bond_type 1 + coupon_rate_bps 2 + maturity_date 8
+    // + target_apy_bps 2 + total_deposits 8 + total_shares 8 + nav_per_share 8
+    // + last_accrual 8 + is_active 1 + bump 1 + share_mint_bump 1 + vault_bump 1) = 185
+    const ORACLE_FEED_OFFSET = 185;
+    const oracleFeed = new PublicKey(
+      vaultInfo.data.subarray(ORACLE_FEED_OFFSET, ORACLE_FEED_OFFSET + 32)
     );
 
     const tx = await this.yieldProgram.methods
       .accrueYield()
       .accounts({
-        keeper: this.keeper.publicKey,
-        vault: bondVaultPda,
-        shareMint: shareMintPda,
-        currencyVault: currencyVaultPda,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        vaultConfig: bondVaultPda,
+        bondPriceOracle: oracleFeed,
       })
       .signers([this.keeper])
       .rpc();

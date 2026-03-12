@@ -37,6 +37,8 @@ pub struct UserPosition {
     pub last_withdrawal_at: i64,
     /// User's deposit nonce (for PendingDeposit PDAs)
     pub deposit_nonce: u64,
+    /// User's withdrawal request nonce (for WithdrawalRequest PDAs)
+    pub withdrawal_nonce: u64,
     /// Account creation timestamp
     pub created_at: i64,
     /// PDA bump
@@ -60,6 +62,7 @@ impl UserPosition {
         + 8   // last_deposit_at
         + 8   // last_withdrawal_at
         + 8   // deposit_nonce
+        + 8   // withdrawal_nonce
         + 8   // created_at
         + 1;  // bump
 

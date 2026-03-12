@@ -101,6 +101,26 @@ pub struct NavUpdated {
 }
 
 #[event]
+pub struct WithdrawalRequested {
+    pub user: Pubkey,
+    pub bond_type: u8,
+    pub shares: u64,
+    pub amount_out: u64,
+    pub claimable_at: i64,
+    pub nonce: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct WithdrawalCancelled {
+    pub user: Pubkey,
+    pub bond_type: u8,
+    pub shares_returned: u64,
+    pub nonce: u64,
+    pub timestamp: i64,
+}
+
+#[event]
 pub struct ProtocolPaused {
     pub authority: Pubkey,
     pub timestamp: i64,

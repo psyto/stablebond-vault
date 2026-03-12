@@ -13,6 +13,13 @@ declare_id!("DLFUfzV4iqCzxmmXmCpR7qH6nhvPSLUekq7JCezV1LeE");
 const SECONDS_PER_YEAR: u64 = 365 * 24 * 60 * 60;
 const NAV_SCALE: u64 = 1_000_000;
 
+/// Oracle PriceFeed layout (Pyth/Switchboard simplified):
+///   discriminator(8) + authority(32) + current_price(u64, 8) + last_update_time(i64, 8)
+const ORACLE_PRICE_OFFSET: usize = 8 + 32;
+const ORACLE_UPDATE_OFFSET: usize = ORACLE_PRICE_OFFSET + 8;
+/// Bond price oracle staleness limit: 5 minutes
+const MAX_BOND_ORACLE_STALENESS: i64 = 300;
+
 #[program]
 pub mod stablebond_yield {
     use super::*;
@@ -44,6 +51,15 @@ pub mod stablebond_yield {
         vault.bump = ctx.bumps.vault_config;
         vault.share_mint_bump = ctx.bumps.share_mint;
         vault.vault_bump = ctx.bumps.currency_vault;
+        // Oracle defaults: disabled, use manual APY fallback
+        vault.oracle_feed = Pubkey::default();
+        vault.last_oracle_price = NAV_SCALE;
+        vault.oracle_enabled = false;
+        // Reserve attestation defaults: no attestor, no staleness enforcement
+        vault.reserve_attestor = Pubkey::default();
+        vault.last_attestation_at = 0;
+        vault.attested_reserve = 0;
+        vault.attestation_max_staleness = BondVault::DEFAULT_ATTESTATION_STALENESS;
 
         msg!(
             "Bond vault initialized: {} with APY {} bps",
@@ -207,17 +223,39 @@ pub mod stablebond_yield {
         Ok(())
     }
 
-    /// Keeper crank: accrue yield based on elapsed time and target APY.
-    /// Maturity-aware: stops accruing after bond maturity date (from Continuum).
+    /// Keeper crank: accrue yield using oracle-derived bond price or fallback APY.
+    ///
+    /// When oracle_enabled=true, reads the bond price oracle to compute a
+    /// market-driven yield rate instead of the admin-set target_apy_bps.
+    /// Oracle price represents bond price as fraction of par (scaled 1e6,
+    /// e.g. 1_005_000 = 100.5% of par = 50bps yield above par).
+    ///
+    /// If a reserve attestor is configured, accrual pauses when the
+    /// attestation is stale (older than attestation_max_staleness).
+    ///
+    /// Maturity-aware: stops accruing after bond maturity date.
     pub fn accrue_yield(ctx: Context<AccrueYield>) -> Result<()> {
         let vault = &mut ctx.accounts.vault_config;
         require!(vault.is_active, BondVaultError::VaultNotActive);
 
         let now = Clock::get()?.unix_timestamp;
 
-        // If bond has matured, stop accruing (from Continuum repo-engine pattern)
+        // If bond has matured, stop accruing
         if vault.maturity_date > 0 && now >= vault.maturity_date {
             return Ok(());
+        }
+
+        // If reserve attestor is configured, check attestation freshness
+        if vault.reserve_attestor != Pubkey::default() {
+            let staleness = now - vault.last_attestation_at;
+            if staleness > vault.attestation_max_staleness {
+                msg!(
+                    "Reserve attestation stale ({} seconds), pausing yield accrual for {}",
+                    staleness,
+                    vault.bond_type.as_str()
+                );
+                return Ok(());
+            }
         }
 
         let elapsed = (now - vault.last_accrual) as u64;
@@ -226,9 +264,79 @@ pub mod stablebond_yield {
             return Ok(());
         }
 
-        // accrual = nav_per_share * target_apy_bps * elapsed / (10000 * SECONDS_PER_YEAR)
+        // Determine effective APY: oracle-derived or manual fallback
+        let effective_apy_bps: u64 = if vault.oracle_enabled {
+            // Read bond price from oracle
+            let oracle_info = &ctx.accounts.bond_price_oracle;
+            require!(
+                oracle_info.key() == vault.oracle_feed,
+                BondVaultError::InvalidOracle
+            );
+
+            let oracle_data = oracle_info.try_borrow_data()?;
+            require!(
+                oracle_data.len() >= ORACLE_UPDATE_OFFSET + 8,
+                BondVaultError::InvalidOracle
+            );
+
+            let bond_price = u64::from_le_bytes(
+                oracle_data[ORACLE_PRICE_OFFSET..ORACLE_PRICE_OFFSET + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            let last_update = i64::from_le_bytes(
+                oracle_data[ORACLE_UPDATE_OFFSET..ORACLE_UPDATE_OFFSET + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            drop(oracle_data);
+
+            require!(bond_price > 0, BondVaultError::InvalidOracle);
+            require!(
+                now - last_update <= MAX_BOND_ORACLE_STALENESS,
+                BondVaultError::StaleOracle
+            );
+
+            vault.last_oracle_price = bond_price;
+
+            // Derive yield from bond price vs par (1_000_000).
+            // If price < par: positive yield (discount bond)
+            //   yield_bps = (par - price) * 10000 / price, annualized
+            // If price > par: the bond trades at a premium, yield is the coupon
+            //   minus the premium amortization (simplified: use coupon rate)
+            // If price == par: yield = coupon rate
+            if bond_price < NAV_SCALE {
+                // Discount: yield = (par - price) / price * 10000
+                // This gives the current yield for a zero-coupon or discount bond
+                let discount_yield = ((NAV_SCALE - bond_price) as u128)
+                    .checked_mul(10_000)
+                    .ok_or(BondVaultError::MathOverflow)?
+                    .checked_div(bond_price as u128)
+                    .ok_or(BondVaultError::MathOverflow)? as u64;
+                // Add coupon rate for coupon-bearing bonds
+                discount_yield.saturating_add(vault.coupon_rate_bps as u64)
+            } else if bond_price > NAV_SCALE {
+                // Premium: yield = coupon - premium amortization
+                // premium_cost_bps = (price - par) / price * 10000
+                let premium_cost = ((bond_price - NAV_SCALE) as u128)
+                    .checked_mul(10_000)
+                    .ok_or(BondVaultError::MathOverflow)?
+                    .checked_div(bond_price as u128)
+                    .ok_or(BondVaultError::MathOverflow)? as u64;
+                (vault.coupon_rate_bps as u64).saturating_sub(premium_cost)
+            } else {
+                vault.coupon_rate_bps as u64
+            }
+        } else {
+            vault.target_apy_bps as u64
+        };
+
+        // Cap at 50% to prevent runaway yield
+        let capped_apy = effective_apy_bps.min(5000);
+
+        // accrual = nav_per_share * effective_apy * elapsed / (10000 * SECONDS_PER_YEAR)
         let accrual = (vault.nav_per_share as u128)
-            .checked_mul(vault.target_apy_bps as u128)
+            .checked_mul(capped_apy as u128)
             .ok_or(BondVaultError::MathOverflow)?
             .checked_mul(elapsed as u128)
             .ok_or(BondVaultError::MathOverflow)?
@@ -242,14 +350,16 @@ pub mod stablebond_yield {
         vault.last_accrual = now;
 
         msg!(
-            "Yield accrued for {}: NAV per share now {}",
+            "Yield accrued for {}: NAV per share now {}, effective APY {} bps (oracle={})",
             vault.bond_type.as_str(),
-            vault.nav_per_share
+            vault.nav_per_share,
+            capped_apy,
+            vault.oracle_enabled
         );
         Ok(())
     }
 
-    /// Admin: update the target APY.
+    /// Admin: update the fallback target APY (used when oracle is disabled).
     pub fn update_apy(ctx: Context<UpdateApy>, new_apy_bps: u16) -> Result<()> {
         require!(new_apy_bps <= 5000, BondVaultError::InvalidApy);
         require!(
@@ -258,7 +368,182 @@ pub mod stablebond_yield {
         );
 
         ctx.accounts.vault_config.target_apy_bps = new_apy_bps;
-        msg!("APY updated to {} bps", new_apy_bps);
+        msg!("Fallback APY updated to {} bps", new_apy_bps);
+        Ok(())
+    }
+
+    /// Admin: configure oracle feed for dynamic pricing.
+    /// Setting oracle_feed to Pubkey::default() disables oracle pricing.
+    pub fn configure_oracle(
+        ctx: Context<ConfigureOracle>,
+        oracle_feed: Pubkey,
+        enabled: bool,
+    ) -> Result<()> {
+        require!(
+            ctx.accounts.authority.key() == ctx.accounts.vault_config.authority,
+            BondVaultError::Unauthorized
+        );
+
+        let vault = &mut ctx.accounts.vault_config;
+        vault.oracle_feed = oracle_feed;
+        vault.oracle_enabled = enabled;
+
+        msg!(
+            "Oracle configured for {}: feed={}, enabled={}",
+            vault.bond_type.as_str(),
+            oracle_feed,
+            enabled
+        );
+        Ok(())
+    }
+
+    /// Admin: configure the reserve attestor authority and staleness parameters.
+    pub fn configure_reserve_attestor(
+        ctx: Context<ConfigureReserveAttestor>,
+        attestor: Pubkey,
+        max_staleness: i64,
+    ) -> Result<()> {
+        require!(
+            ctx.accounts.authority.key() == ctx.accounts.vault_config.authority,
+            BondVaultError::Unauthorized
+        );
+        require!(max_staleness > 0, BondVaultError::InvalidAttestationConfig);
+
+        let vault = &mut ctx.accounts.vault_config;
+        vault.reserve_attestor = attestor;
+        vault.attestation_max_staleness = max_staleness;
+
+        msg!(
+            "Reserve attestor configured for {}: attestor={}, max_staleness={}s",
+            vault.bond_type.as_str(),
+            attestor,
+            max_staleness
+        );
+        Ok(())
+    }
+
+    /// Attestor: submit a Proof-of-Reserve attestation.
+    /// Only the configured reserve_attestor can call this.
+    /// The attested reserve amount must be verifiable against off-chain custodian records.
+    pub fn submit_reserve_attestation(
+        ctx: Context<SubmitReserveAttestation>,
+        attested_reserve: u64,
+    ) -> Result<()> {
+        let vault = &mut ctx.accounts.vault_config;
+
+        require!(
+            vault.reserve_attestor != Pubkey::default(),
+            BondVaultError::NoAttestorConfigured
+        );
+        require!(
+            ctx.accounts.attestor.key() == vault.reserve_attestor,
+            BondVaultError::Unauthorized
+        );
+        require!(attested_reserve > 0, BondVaultError::InvalidAttestation);
+
+        let now = Clock::get()?.unix_timestamp;
+        vault.last_attestation_at = now;
+        vault.attested_reserve = attested_reserve;
+
+        msg!(
+            "Reserve attestation submitted for {}: {} units at {}",
+            vault.bond_type.as_str(),
+            attested_reserve,
+            now
+        );
+        Ok(())
+    }
+
+    /// Keeper crank with reward: accrue yield and pay the caller a small incentive.
+    /// This enables decentralized keeper networks by embedding rewards in the program.
+    /// Reward = 0.01% of total_deposits, capped at 10_000 minor units (~$0.01).
+    pub fn accrue_yield_incentivized(ctx: Context<AccrueYieldIncentivized>) -> Result<()> {
+        let vault = &mut ctx.accounts.vault_config;
+        require!(vault.is_active, BondVaultError::VaultNotActive);
+
+        let now = Clock::get()?.unix_timestamp;
+
+        // If bond has matured, stop accruing
+        if vault.maturity_date > 0 && now >= vault.maturity_date {
+            return Ok(());
+        }
+
+        // If reserve attestor is configured, check attestation freshness
+        if vault.reserve_attestor != Pubkey::default() {
+            let staleness = now - vault.last_attestation_at;
+            if staleness > vault.attestation_max_staleness {
+                msg!("Reserve attestation stale, pausing accrual");
+                return Ok(());
+            }
+        }
+
+        let elapsed = (now - vault.last_accrual) as u64;
+        if elapsed == 0 || vault.total_shares == 0 {
+            return Ok(());
+        }
+
+        // Minimum 30 seconds between incentivized cranks to prevent spam
+        require!(elapsed >= 30, BondVaultError::CrankTooFrequent);
+
+        // Use target_apy_bps for incentivized path (oracle path uses accrue_yield)
+        let apy = vault.target_apy_bps as u128;
+
+        let accrual = (vault.nav_per_share as u128)
+            .checked_mul(apy)
+            .ok_or(BondVaultError::MathOverflow)?
+            .checked_mul(elapsed as u128)
+            .ok_or(BondVaultError::MathOverflow)?
+            .checked_div(10_000u128 * SECONDS_PER_YEAR as u128)
+            .ok_or(BondVaultError::MathOverflow)?;
+
+        vault.nav_per_share = vault
+            .nav_per_share
+            .checked_add(accrual as u64)
+            .ok_or(BondVaultError::MathOverflow)?;
+        vault.last_accrual = now;
+
+        // Calculate keeper reward: 0.01% of total_deposits, capped at 10_000 (0.01 settlement units)
+        let reward = (vault.total_deposits as u128)
+            .checked_mul(1)
+            .ok_or(BondVaultError::MathOverflow)?
+            .checked_div(10_000)
+            .ok_or(BondVaultError::MathOverflow)? as u64;
+        let capped_reward = reward.min(10_000);
+
+        // Extract values before dropping the mutable borrow for the CPI
+        let bond_type_byte = vault.bond_type.as_u8();
+        let authority_key = vault.authority;
+        let bump = vault.bump;
+        let nav = vault.nav_per_share;
+        let bond_name = vault.bond_type.as_str();
+
+        if capped_reward > 0 && ctx.accounts.currency_vault.amount > capped_reward {
+            let vault_seeds: &[&[u8]] = &[
+                BondVault::SEED,
+                authority_key.as_ref(),
+                std::slice::from_ref(&bond_type_byte),
+                &[bump],
+            ];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.currency_vault.to_account_info(),
+                        to: ctx.accounts.keeper_token.to_account_info(),
+                        authority: ctx.accounts.vault_config.to_account_info(),
+                    },
+                    &[vault_seeds],
+                ),
+                capped_reward,
+            )?;
+        }
+
+        msg!(
+            "Incentivized yield accrued for {}: NAV {}, reward {} to keeper",
+            bond_name,
+            nav,
+            capped_reward
+        );
         Ok(())
     }
 }
@@ -419,11 +704,82 @@ pub struct AccrueYield<'info> {
         bump = vault_config.bump,
     )]
     pub vault_config: Account<'info, BondVault>,
+
+    /// Bond price oracle feed. Required when oracle_enabled=true.
+    /// CHECK: Validated against vault_config.oracle_feed in handler.
+    pub bond_price_oracle: AccountInfo<'info>,
+}
+
+#[derive(Accounts)]
+pub struct AccrueYieldIncentivized<'info> {
+    /// Keeper that triggers the crank and receives reward
+    #[account(mut)]
+    pub keeper: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [BondVault::SEED, vault_config.authority.as_ref(), &[vault_config.bond_type.as_u8()]],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, BondVault>,
+
+    #[account(
+        mut,
+        seeds = [BondVault::CURRENCY_VAULT_SEED, vault_config.authority.as_ref(), &[vault_config.bond_type.as_u8()]],
+        bump = vault_config.vault_bump,
+    )]
+    pub currency_vault: Account<'info, TokenAccount>,
+
+    /// Keeper's token account to receive reward
+    #[account(
+        mut,
+        constraint = keeper_token.owner == keeper.key(),
+        constraint = keeper_token.mint == vault_config.currency_mint,
+    )]
+    pub keeper_token: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
 pub struct UpdateApy<'info> {
     pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [BondVault::SEED, vault_config.authority.as_ref(), &[vault_config.bond_type.as_u8()]],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, BondVault>,
+}
+
+#[derive(Accounts)]
+pub struct ConfigureOracle<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [BondVault::SEED, vault_config.authority.as_ref(), &[vault_config.bond_type.as_u8()]],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, BondVault>,
+}
+
+#[derive(Accounts)]
+pub struct ConfigureReserveAttestor<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [BondVault::SEED, vault_config.authority.as_ref(), &[vault_config.bond_type.as_u8()]],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, BondVault>,
+}
+
+#[derive(Accounts)]
+pub struct SubmitReserveAttestation<'info> {
+    pub attestor: Signer<'info>,
 
     #[account(
         mut,

@@ -28,4 +28,22 @@ pub enum BondVaultError {
 
     #[msg("Bond has matured — no further yield accrual")]
     BondMatured,
+
+    #[msg("Invalid or mismatched bond price oracle")]
+    InvalidOracle,
+
+    #[msg("Bond price oracle data is stale (>300 seconds)")]
+    StaleOracle,
+
+    #[msg("No reserve attestor configured")]
+    NoAttestorConfigured,
+
+    #[msg("Invalid reserve attestation: amount must be > 0")]
+    InvalidAttestation,
+
+    #[msg("Invalid attestation config: max_staleness must be > 0")]
+    InvalidAttestationConfig,
+
+    #[msg("Incentivized crank called too frequently (min 30 seconds)")]
+    CrankTooFrequent,
 }

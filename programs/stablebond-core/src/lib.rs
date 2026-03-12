@@ -57,8 +57,37 @@ pub mod stablebond_core {
         instructions::execute_conversion::handle_execute_conversion(ctx)
     }
 
+    /// Legacy immediate withdrawal (kept for backward compatibility).
     pub fn withdraw(ctx: Context<Withdraw>, shares: u64, bond_type: BondType) -> Result<()> {
         instructions::withdraw::handle_withdraw(ctx, shares, bond_type)
+    }
+
+    /// Request a withdrawal with a bond-type-specific cooldown period.
+    /// Shares are locked immediately; settlement is available after cooldown.
+    pub fn request_withdrawal(
+        ctx: Context<RequestWithdrawal>,
+        shares: u64,
+        bond_type: BondType,
+    ) -> Result<()> {
+        instructions::withdraw::handle_request_withdrawal(ctx, shares, bond_type)
+    }
+
+    /// Claim a withdrawal after the cooldown period has elapsed.
+    pub fn claim_withdrawal(
+        ctx: Context<ClaimWithdrawal>,
+        bond_type: BondType,
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw::handle_claim_withdrawal(ctx, bond_type, nonce)
+    }
+
+    /// Cancel a pending withdrawal request and return shares to user.
+    pub fn cancel_withdrawal(
+        ctx: Context<CancelWithdrawal>,
+        bond_type: BondType,
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw::handle_cancel_withdrawal(ctx, bond_type, nonce)
     }
 
     pub fn claim_yield(ctx: Context<ClaimYield>, bond_type: BondType) -> Result<()> {

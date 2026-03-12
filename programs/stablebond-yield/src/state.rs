@@ -20,7 +20,7 @@ pub struct BondVault {
     pub coupon_rate_bps: u16,
     /// Bond maturity date as unix timestamp (0 = no maturity / rolling)
     pub maturity_date: i64,
-    /// Target APY in basis points (e.g., 450 = 4.50%)
+    /// Target APY in basis points — used as fallback when oracle is unavailable
     pub target_apy_bps: u16,
     /// Total currency deposited (accounting value)
     pub total_deposits: u64,
@@ -38,6 +38,22 @@ pub struct BondVault {
     pub share_mint_bump: u8,
     /// PDA bump for currency_vault token account
     pub vault_bump: u8,
+    // === Oracle-based NAV fields ===
+    /// Bond price oracle feed (Pyth/Switchboard). Pubkey::default() = use manual APY fallback.
+    pub oracle_feed: Pubkey,
+    /// Last oracle-derived bond price (scaled 1e6, e.g. 990000 = 0.99)
+    pub last_oracle_price: u64,
+    /// Whether oracle-driven pricing is enabled (vs manual APY fallback)
+    pub oracle_enabled: bool,
+    // === Proof of Reserve fields ===
+    /// Off-chain reserve attestor authority (custodian/auditor)
+    pub reserve_attestor: Pubkey,
+    /// Last reserve attestation timestamp
+    pub last_attestation_at: i64,
+    /// Attested reserve amount in settlement currency minor units
+    pub attested_reserve: u64,
+    /// Maximum staleness for reserve attestation (seconds). Accrual pauses if stale.
+    pub attestation_max_staleness: i64,
 }
 
 impl BondVault {
@@ -57,11 +73,21 @@ impl BondVault {
         + 1   // is_active
         + 1   // bump
         + 1   // share_mint_bump
-        + 1;  // vault_bump
+        + 1   // vault_bump
+        + 32  // oracle_feed
+        + 8   // last_oracle_price
+        + 1   // oracle_enabled
+        + 32  // reserve_attestor
+        + 8   // last_attestation_at
+        + 8   // attested_reserve
+        + 8;  // attestation_max_staleness
 
     pub const SEED: &'static [u8] = b"bond_vault";
     pub const CURRENCY_VAULT_SEED: &'static [u8] = b"bond_currency_vault";
     pub const SHARE_MINT_SEED: &'static [u8] = b"bond_share_mint";
+
+    /// Default attestation staleness: 24 hours
+    pub const DEFAULT_ATTESTATION_STALENESS: i64 = 86_400;
 }
 
 /// Per-user share tracking within a bond vault.

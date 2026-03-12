@@ -83,3 +83,71 @@ export function buildBondRegistryTree(
   );
   return new MerkleTree(leaves);
 }
+
+// ---------------------------------------------------------------------------
+// Proof of Reserve (PoR) Merkle Tree
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a Proof-of-Reserve merkle tree from off-chain custodian holdings.
+ * Each leaf encodes `bondType:custodian:isin:faceValue:holdings:timestamp`.
+ *
+ * This tree can be verified on-chain against the attested reserve in BondVault.
+ * The root hash should match the custodian's signed attestation.
+ */
+export function buildProofOfReserveTree(
+  holdings: Array<{
+    bondType: string;
+    custodian: string;
+    isin: string;
+    faceValue: string;
+    holdings: string;
+    timestamp: string;
+  }>,
+): MerkleTree {
+  const leaves = holdings.map(
+    (h) =>
+      `${h.bondType}:${h.custodian}:${h.isin}:${h.faceValue}:${h.holdings}:${h.timestamp}`,
+  );
+  return new MerkleTree(leaves);
+}
+
+/**
+ * Generate a proof for a specific bond holding in the PoR tree.
+ */
+export function getReserveProof(
+  tree: MerkleTree,
+  bondType: string,
+  custodian: string,
+  isin: string,
+  faceValue: string,
+  holdings: string,
+  timestamp: string,
+): { proof: number[][]; root: number[]; index: number } {
+  const leaf = `${bondType}:${custodian}:${isin}:${faceValue}:${holdings}:${timestamp}`;
+  const index = tree.findLeafIndex(leaf);
+  if (index < 0) throw new Error('Holding not found in PoR tree');
+  return {
+    proof: tree.getProofArray(index),
+    root: tree.rootArray,
+    index,
+  };
+}
+
+/**
+ * Verify that total attested reserves cover total vault deposits.
+ * Returns the coverage ratio (>= 1.0 means fully backed).
+ */
+export function verifyReserveCoverage(
+  attestedReserve: bigint,
+  totalDeposits: bigint,
+): { ratio: number; isFullyBacked: boolean } {
+  if (totalDeposits === 0n) {
+    return { ratio: 1.0, isFullyBacked: true };
+  }
+  const ratio = Number(attestedReserve * 10_000n / totalDeposits) / 10_000;
+  return {
+    ratio,
+    isFullyBacked: ratio >= 1.0,
+  };
+}

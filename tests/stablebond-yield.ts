@@ -317,6 +317,7 @@ describe("stablebond-yield", () => {
         .accrueYield()
         .accounts({
           vaultConfig: vaultPda,
+          bondPriceOracle: SystemProgram.programId,
         })
         .rpc();
 
@@ -369,7 +370,7 @@ describe("stablebond-yield", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      await program.methods.accrueYield().accounts({ vaultConfig: vaultPda }).rpc();
+      await program.methods.accrueYield().accounts({ vaultConfig: vaultPda, bondPriceOracle: SystemProgram.programId }).rpc();
 
       const vaultAfter = await program.account.bondVault.fetch(vaultPda);
 

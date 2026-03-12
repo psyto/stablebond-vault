@@ -104,3 +104,68 @@ export function formatAmount(
   const fracStr = frac.toString().padStart(decimals, "0").slice(0, maxFractionDigits);
   return `${whole.toString()}.${fracStr}`;
 }
+
+/**
+ * Derive effective APY from a bond oracle price relative to par.
+ * Mirrors the on-chain oracle-based yield derivation in accrue_yield.
+ *
+ * @param bondPrice - Bond price scaled 1e6 (e.g. 990000 = 0.99, 1005000 = 1.005)
+ * @param couponRateBps - Bond coupon rate in basis points
+ * @returns Effective yield in basis points
+ */
+export function oracleDerivedApyBps(
+  bondPrice: bigint,
+  couponRateBps: number
+): number {
+  if (bondPrice === 0n) return 0;
+
+  if (bondPrice < NAV_SCALE) {
+    // Discount bond: yield = (par - price) / price * 10000 + coupon
+    const discountYield = Number((NAV_SCALE - bondPrice) * 10_000n / bondPrice);
+    return discountYield + couponRateBps;
+  } else if (bondPrice > NAV_SCALE) {
+    // Premium bond: yield = coupon - premium amortization
+    const premiumCost = Number((bondPrice - NAV_SCALE) * 10_000n / bondPrice);
+    return Math.max(0, couponRateBps - premiumCost);
+  } else {
+    return couponRateBps;
+  }
+}
+
+/**
+ * Estimate oracle-aware accrual using a bond price feed.
+ * Combines oracle price derivation with time-based accrual.
+ */
+export function estimateOracleAccrual(
+  navPerShare: bigint,
+  bondPrice: bigint,
+  couponRateBps: number,
+  elapsedSeconds: bigint
+): bigint {
+  const effectiveBps = oracleDerivedApyBps(bondPrice, couponRateBps);
+  const cappedBps = Math.min(effectiveBps, 5000);
+  return estimateAccrual(navPerShare, cappedBps, elapsedSeconds);
+}
+
+/**
+ * Withdrawal cooldown period in seconds per bond type.
+ * Mirrors the on-chain withdrawal_cooldown_seconds() function.
+ */
+export enum BondTypeEnum {
+  UsTBill = 0,
+  MxCetes = 1,
+  BrTesouro = 2,
+  JpJgb = 3,
+  Custom = 4,
+}
+
+export function withdrawalCooldownSeconds(bondType: BondTypeEnum): number {
+  switch (bondType) {
+    case BondTypeEnum.UsTBill: return 86_400;      // T+1
+    case BondTypeEnum.MxCetes: return 172_800;     // T+2
+    case BondTypeEnum.BrTesouro: return 172_800;   // T+2
+    case BondTypeEnum.JpJgb: return 172_800;       // T+2
+    case BondTypeEnum.Custom: return 86_400;       // T+1
+    default: return 86_400;
+  }
+}

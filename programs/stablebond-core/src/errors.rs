@@ -85,4 +85,13 @@ pub enum StablebondError {
 
     #[msg("Bond type already registered")]
     BondTypeAlreadyRegistered,
+
+    #[msg("Withdrawal cooldown period has not elapsed")]
+    WithdrawalCooldownActive,
+
+    #[msg("Withdrawal request has already been claimed")]
+    WithdrawalAlreadyClaimed,
+
+    #[msg("Withdrawal request has been cancelled")]
+    WithdrawalCancelled,
 }
