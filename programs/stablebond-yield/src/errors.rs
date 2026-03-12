@@ -46,4 +46,7 @@ pub enum BondVaultError {
 
     #[msg("Incentivized crank called too frequently (min 30 seconds)")]
     CrankTooFrequent,
+
+    #[msg("Immediate withdrawals are disabled — use the cooldown-based withdrawal flow")]
+    ImmediateWithdrawDisabled,
 }

@@ -60,6 +60,7 @@ pub mod stablebond_yield {
         vault.last_attestation_at = 0;
         vault.attested_reserve = 0;
         vault.attestation_max_staleness = BondVault::DEFAULT_ATTESTATION_STALENESS;
+        vault.allow_immediate_withdraw = false;
 
         msg!(
             "Bond vault initialized: {} with APY {} bps",
@@ -147,9 +148,17 @@ pub mod stablebond_yield {
     }
 
     /// Withdraw shares and receive settlement currency based on current NAV.
+    /// NOTE: This legacy immediate withdraw is gated by `allow_immediate_withdraw`.
+    /// When disabled (default), users must use the cooldown-based withdrawal flow
+    /// on stablebond-core. Authority can enable this for emergency use via
+    /// `set_immediate_withdraw`.
     pub fn withdraw(ctx: Context<Withdraw>, shares: u64) -> Result<()> {
         let vault = &ctx.accounts.vault_config;
         require!(vault.is_active, BondVaultError::VaultNotActive);
+        require!(
+            vault.allow_immediate_withdraw,
+            BondVaultError::ImmediateWithdrawDisabled
+        );
         require!(shares > 0, BondVaultError::ZeroWithdrawal);
 
         let user_shares_account = &ctx.accounts.user_shares;
@@ -450,6 +459,28 @@ pub mod stablebond_yield {
             vault.bond_type.as_str(),
             attested_reserve,
             now
+        );
+        Ok(())
+    }
+
+    /// Admin: toggle the legacy immediate withdrawal flag.
+    /// When enabled, users can bypass the cooldown-based withdrawal flow.
+    /// Use sparingly — intended for emergency liquidity situations only.
+    pub fn set_immediate_withdraw(
+        ctx: Context<SetImmediateWithdraw>,
+        allow: bool,
+    ) -> Result<()> {
+        require!(
+            ctx.accounts.authority.key() == ctx.accounts.vault_config.authority,
+            BondVaultError::Unauthorized
+        );
+
+        ctx.accounts.vault_config.allow_immediate_withdraw = allow;
+
+        msg!(
+            "Immediate withdraw {} for {}",
+            if allow { "enabled" } else { "disabled" },
+            ctx.accounts.vault_config.bond_type.as_str()
         );
         Ok(())
     }
@@ -780,6 +811,18 @@ pub struct ConfigureReserveAttestor<'info> {
 #[derive(Accounts)]
 pub struct SubmitReserveAttestation<'info> {
     pub attestor: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [BondVault::SEED, vault_config.authority.as_ref(), &[vault_config.bond_type.as_u8()]],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Account<'info, BondVault>,
+}
+
+#[derive(Accounts)]
+pub struct SetImmediateWithdraw<'info> {
+    pub authority: Signer<'info>,
 
     #[account(
         mut,

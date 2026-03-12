@@ -3,11 +3,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import type { YieldSourceAccount } from "@stablebond/types";
+import type { BondVaultExtended } from "@stablebond/sdk";
 import { useProtocol } from "@/providers/ProtocolProvider";
 import { useUserPortfolio } from "@/hooks/useUserPortfolio";
 import { useStablebondClient } from "@/hooks/useStablebondClient";
 import { YieldSummaryCard } from "@/components/yield/YieldSummaryCard";
 import { YieldBreakdownTable } from "@/components/yield/YieldBreakdownTable";
+import { AggregateReserveCoverage } from "@/components/yield/AggregateReserveCoverage";
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 
@@ -18,24 +20,29 @@ export default function YieldPage() {
   const client = useStablebondClient();
 
   const [yieldSources, setYieldSources] = useState<Map<number, YieldSourceAccount>>(new Map());
+  const [vaultsExtended, setVaultsExtended] = useState<Map<number, BondVaultExtended>>(new Map());
 
-  const fetchYieldSources = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     if (bonds.length === 0) return;
     const sources = new Map<number, YieldSourceAccount>();
+    const vExt = new Map<number, BondVaultExtended>();
     for (const bond of bonds) {
       try {
         const ys = await client.getYieldSource(bond.currencyMint);
         if (ys) sources.set(bond.bondType, ys);
+        const ext = await client.getBondVaultExtended(bond.bondType);
+        if (ext) vExt.set(bond.bondType, ext);
       } catch {}
     }
     setYieldSources(sources);
+    setVaultsExtended(vExt);
   }, [client, bonds]);
 
   useEffect(() => {
-    fetchYieldSources();
-    const id = setInterval(fetchYieldSources, 15_000);
+    fetchData();
+    const id = setInterval(fetchData, 15_000);
     return () => clearInterval(id);
-  }, [fetchYieldSources]);
+  }, [fetchData]);
 
   if (!connected) {
     return (
@@ -65,6 +72,9 @@ export default function YieldPage() {
       {error && <ErrorBanner message={error} />}
 
       <YieldSummaryCard positions={positions} yieldSources={yieldSources} />
+
+      <AggregateReserveCoverage vaults={vaultsExtended} />
+
       <YieldBreakdownTable positions={positions} yieldSources={yieldSources} />
     </div>
   );

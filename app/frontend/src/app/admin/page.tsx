@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { useConnection } from "@solana/wallet-adapter-react";
 import type { YieldSourceAccount } from "@stablebond/types";
+import type { BondVaultExtended } from "@stablebond/sdk";
 import { useProtocol } from "@/providers/ProtocolProvider";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useStablebondClient } from "@/hooks/useStablebondClient";
@@ -11,6 +11,7 @@ import { ProtocolConfigPanel } from "@/components/admin/ProtocolConfigPanel";
 import { PauseResumeToggle } from "@/components/admin/PauseResumeToggle";
 import { BondRegistryPanel } from "@/components/admin/BondRegistryPanel";
 import { YieldSourcePanel } from "@/components/admin/YieldSourcePanel";
+import { VaultOraclePanel } from "@/components/admin/VaultOraclePanel";
 import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
 import { ErrorBanner } from "@/components/shared/ErrorBanner";
 import { useToast } from "@/components/shared/ToastProvider";
@@ -23,25 +24,30 @@ export default function AdminPage() {
   const { addToast } = useToast();
 
   const [yieldSources, setYieldSources] = useState<YieldSourceAccount[]>([]);
+  const [vaultsExtended, setVaultsExtended] = useState<Map<number, BondVaultExtended>>(new Map());
   const [actionLoading, setActionLoading] = useState(false);
 
-  const fetchYieldSources = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     if (bonds.length === 0) return;
     const sources: YieldSourceAccount[] = [];
+    const vExt = new Map<number, BondVaultExtended>();
     for (const bond of bonds) {
       try {
         const ys = await client.getYieldSource(bond.currencyMint);
         if (ys) sources.push(ys);
+        const ext = await client.getBondVaultExtended(bond.bondType);
+        if (ext) vExt.set(bond.bondType, ext);
       } catch {}
     }
     setYieldSources(sources);
+    setVaultsExtended(vExt);
   }, [client, bonds]);
 
   useEffect(() => {
-    fetchYieldSources();
-    const id = setInterval(fetchYieldSources, 15_000);
+    fetchData();
+    const id = setInterval(fetchData, 15_000);
     return () => clearInterval(id);
-  }, [fetchYieldSources]);
+  }, [fetchData]);
 
   if (!connected) {
     return (
@@ -82,8 +88,6 @@ export default function AdminPage() {
   }) => {
     setActionLoading(true);
     try {
-      // Admin txs call Anchor program directly (not StablebondClient)
-      // In production, this would use program.methods.updateProtocolConfig(...)
       addToast("info", "Fee update transaction would be submitted here");
     } catch (e: any) {
       addToast("error", e.message ?? "Failed to update fees");
@@ -114,6 +118,62 @@ export default function AdminPage() {
     }
   };
 
+  const handleConfigureOracle = async (
+    bondType: number,
+    oracleFeed: string,
+    enabled: boolean
+  ) => {
+    setActionLoading(true);
+    try {
+      addToast(
+        "info",
+        `Oracle ${enabled ? "enabled" : "disabled"} for bond type ${bondType} — submit tx via program.methods.configureOracle()`
+      );
+      await fetchData();
+    } catch (e: any) {
+      addToast("error", e.message ?? "Failed to configure oracle");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleConfigureAttestor = async (
+    bondType: number,
+    attestor: string,
+    maxStaleness: number
+  ) => {
+    setActionLoading(true);
+    try {
+      addToast(
+        "info",
+        `Attestor configured for bond type ${bondType} — submit tx via program.methods.configureReserveAttestor()`
+      );
+      await fetchData();
+    } catch (e: any) {
+      addToast("error", e.message ?? "Failed to configure attestor");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSetImmediateWithdraw = async (
+    bondType: number,
+    allow: boolean
+  ) => {
+    setActionLoading(true);
+    try {
+      addToast(
+        "info",
+        `Immediate withdraw ${allow ? "enabled" : "disabled"} for bond type ${bondType} — submit tx via program.methods.setImmediateWithdraw()`
+      );
+      await fetchData();
+    } catch (e: any) {
+      addToast("error", e.message ?? "Failed to toggle immediate withdraw");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-white">Admin</h1>
@@ -128,6 +188,15 @@ export default function AdminPage() {
       <ProtocolConfigPanel
         config={config}
         onUpdate={handleUpdateFees}
+        loading={actionLoading}
+      />
+
+      <VaultOraclePanel
+        bonds={bonds}
+        vaults={vaultsExtended}
+        onConfigureOracle={handleConfigureOracle}
+        onConfigureAttestor={handleConfigureAttestor}
+        onSetImmediateWithdraw={handleSetImmediateWithdraw}
         loading={actionLoading}
       />
 

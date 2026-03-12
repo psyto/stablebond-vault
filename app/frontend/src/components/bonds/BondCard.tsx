@@ -8,13 +8,16 @@ import { ApyBadge } from "@/components/yield/ApyBadge";
 import { TierBadge } from "@/components/shared/TierBadge";
 import { timestampToDate, bpsToPercent } from "@/lib/formatters";
 
+import type { BondVaultExtended } from "@stablebond/sdk";
+
 interface BondCardProps {
   bond: BondConfig;
   tvl?: bigint;
   navPerShare?: bigint;
+  vaultExtended?: BondVaultExtended | null;
 }
 
-export function BondCard({ bond, tvl, navPerShare }: BondCardProps) {
+export function BondCard({ bond, tvl, navPerShare, vaultExtended }: BondCardProps) {
   const label = BOND_TYPE_LABELS[bond.bondType] ?? "Custom Bond";
   const currency = BOND_CURRENCIES[bond.bondType] ?? "USD";
 
@@ -24,18 +27,44 @@ export function BondCard({ bond, tvl, navPerShare }: BondCardProps) {
         <h3 className="font-semibold text-white group-hover:text-accent-blue">
           {label}
         </h3>
-        <span
-          className={`inline-block h-2 w-2 rounded-full ${
-            bond.isActive ? "bg-accent-green" : "bg-gray-500"
-          }`}
-        />
+        <div className="flex items-center gap-2">
+          {vaultExtended && (
+            <div className="flex items-center gap-1">
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  vaultExtended.oracleEnabled ? "bg-blue-400" : "bg-gray-600"
+                }`}
+                title={vaultExtended.oracleEnabled ? "Oracle active" : "Manual APY"}
+              />
+              {vaultExtended.attestedReserve > 0n && (
+                <span
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    vaultExtended.attestedReserve >= vaultExtended.totalDeposits
+                      ? "bg-accent-green"
+                      : "bg-red-400"
+                  }`}
+                  title={
+                    vaultExtended.attestedReserve >= vaultExtended.totalDeposits
+                      ? "Fully backed"
+                      : "Under-collateralized"
+                  }
+                />
+              )}
+            </div>
+          )}
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${
+              bond.isActive ? "bg-accent-green" : "bg-gray-500"
+            }`}
+          />
+        </div>
       </div>
 
       <div className="mb-4 flex items-center gap-2">
         <span className="rounded bg-surface-2 px-2 py-0.5 text-xs text-gray-300">
           {currency}
         </span>
-        <ApyBadge apyBps={bond.defaultApyBps} />
+        <ApyBadge apyBps={bond.defaultApyBps} oracleEnabled={vaultExtended?.oracleEnabled} />
         <TierBadge tier={bond.minTier as Tier} />
       </div>
 

@@ -549,7 +549,234 @@ describe("new-features", () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 5. Diamond Tier Caps
+  // 5. Legacy Withdraw Gating
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("legacy withdraw gating", () => {
+    let userCurrency: PublicKey;
+    let userSharesAta: PublicKey;
+    let userSharesPda: PublicKey;
+    let gateVaultPda: PublicKey;
+    let gateShareMintPda: PublicKey;
+    let gateCurrencyVaultPda: PublicKey;
+
+    before(async () => {
+      // Initialize a separate MxCetes vault for gating tests
+      [gateVaultPda] = findBondVaultPda(
+        ctx.authority.publicKey,
+        BOND_TYPE_U8.MxCetes,
+        yieldProgram.programId
+      );
+      [gateShareMintPda] = findBondShareMintPda(
+        ctx.authority.publicKey,
+        BOND_TYPE_U8.MxCetes,
+        yieldProgram.programId
+      );
+      [gateCurrencyVaultPda] = findBondCurrencyVaultPda(
+        ctx.authority.publicKey,
+        BOND_TYPE_U8.MxCetes,
+        yieldProgram.programId
+      );
+
+      await yieldProgram.methods
+        .initializeVault(BondType.MxCetes, 900, 900, new BN(0))
+        .accounts({
+          authority: ctx.authority.publicKey,
+          vaultConfig: gateVaultPda,
+          currencyMint: usdcMint,
+          shareMint: gateShareMintPda,
+          currencyVault: gateCurrencyVaultPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([ctx.authority])
+        .rpc();
+
+      // Fund user and deposit
+      userCurrency = await createAndFundTokenAccount(
+        ctx.connection,
+        ctx.authority,
+        usdcMint,
+        ctx.user.publicKey,
+        5_000_000_000
+      );
+
+      userSharesAta = await createAccount(
+        ctx.connection,
+        ctx.user,
+        gateShareMintPda,
+        ctx.user.publicKey
+      );
+
+      [userSharesPda] = findUserSharesPda(
+        gateVaultPda,
+        ctx.user.publicKey,
+        yieldProgram.programId
+      );
+
+      await yieldProgram.methods
+        .deposit(new BN(1_000_000_000))
+        .accounts({
+          user: ctx.user.publicKey,
+          vaultConfig: gateVaultPda,
+          currencyVault: gateCurrencyVaultPda,
+          shareMint: gateShareMintPda,
+          userCurrency,
+          userSharesAta,
+          userShares: userSharesPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([ctx.user])
+        .rpc();
+    });
+
+    it("rejects immediate withdraw when allow_immediate_withdraw is false (default)", async () => {
+      try {
+        await yieldProgram.methods
+          .withdraw(new BN(100_000_000))
+          .accounts({
+            user: ctx.user.publicKey,
+            vaultConfig: gateVaultPda,
+            currencyVault: gateCurrencyVaultPda,
+            shareMint: gateShareMintPda,
+            userCurrency,
+            userSharesAta,
+            userShares: userSharesPda,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([ctx.user])
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.toString()).to.include("ImmediateWithdrawDisabled");
+      }
+    });
+
+    it("authority can enable immediate withdraw", async () => {
+      await yieldProgram.methods
+        .setImmediateWithdraw(true)
+        .accounts({
+          authority: ctx.authority.publicKey,
+          vaultConfig: gateVaultPda,
+        })
+        .signers([ctx.authority])
+        .rpc();
+
+      const vault = await yieldProgram.account.bondVault.fetch(gateVaultPda);
+      expect(vault.allowImmediateWithdraw).to.be.true;
+    });
+
+    it("immediate withdraw works when enabled", async () => {
+      const balanceBefore = await getTokenBalance(ctx.connection, userSharesAta);
+
+      await yieldProgram.methods
+        .withdraw(new BN(100_000_000))
+        .accounts({
+          user: ctx.user.publicKey,
+          vaultConfig: gateVaultPda,
+          currencyVault: gateCurrencyVaultPda,
+          shareMint: gateShareMintPda,
+          userCurrency,
+          userSharesAta,
+          userShares: userSharesPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([ctx.user])
+        .rpc();
+
+      const balanceAfter = await getTokenBalance(ctx.connection, userSharesAta);
+      expect(Number(balanceAfter)).to.be.lessThan(Number(balanceBefore));
+    });
+
+    it("non-authority cannot toggle immediate withdraw", async () => {
+      try {
+        await yieldProgram.methods
+          .setImmediateWithdraw(false)
+          .accounts({
+            authority: ctx.user.publicKey,
+            vaultConfig: gateVaultPda,
+          })
+          .signers([ctx.user])
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.toString()).to.include("Unauthorized");
+      }
+    });
+
+    it("authority can disable immediate withdraw again", async () => {
+      await yieldProgram.methods
+        .setImmediateWithdraw(false)
+        .accounts({
+          authority: ctx.authority.publicKey,
+          vaultConfig: gateVaultPda,
+        })
+        .signers([ctx.authority])
+        .rpc();
+
+      const vault = await yieldProgram.account.bondVault.fetch(gateVaultPda);
+      expect(vault.allowImmediateWithdraw).to.be.false;
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 6. Withdrawal Cooldown E2E Flow
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("withdrawal cooldown e2e", () => {
+    it("derives withdrawal request PDAs with correct seeds", () => {
+      // Verify the PDA derivation is stable and deterministic
+      const config = Keypair.generate().publicKey;
+      const user = Keypair.generate().publicKey;
+
+      const [pda1, bump1] = findWithdrawalRequestPda(config, user, 0, CORE_PROGRAM_ID);
+      const [pda2, bump2] = findWithdrawalRequestPda(config, user, 0, CORE_PROGRAM_ID);
+
+      expect(pda1.toBase58()).to.equal(pda2.toBase58());
+      expect(bump1).to.equal(bump2);
+    });
+
+    it("sequential nonces produce unique PDAs for the same user", () => {
+      const config = Keypair.generate().publicKey;
+      const user = Keypair.generate().publicKey;
+      const pdas = new Set<string>();
+
+      for (let nonce = 0; nonce < 20; nonce++) {
+        const [pda] = findWithdrawalRequestPda(config, user, nonce, CORE_PROGRAM_ID);
+        pdas.add(pda.toBase58());
+      }
+
+      // All 20 PDAs should be unique
+      expect(pdas.size).to.equal(20);
+    });
+
+    it("withdrawal request PDA includes config, user, and nonce in seeds", () => {
+      const config = Keypair.generate().publicKey;
+      const user1 = Keypair.generate().publicKey;
+      const user2 = Keypair.generate().publicKey;
+
+      // Same config, different users
+      const [pdaA] = findWithdrawalRequestPda(config, user1, 0, CORE_PROGRAM_ID);
+      const [pdaB] = findWithdrawalRequestPda(config, user2, 0, CORE_PROGRAM_ID);
+      expect(pdaA.toBase58()).to.not.equal(pdaB.toBase58());
+
+      // Same user, different configs
+      const config2 = Keypair.generate().publicKey;
+      const [pdaC] = findWithdrawalRequestPda(config, user1, 0, CORE_PROGRAM_ID);
+      const [pdaD] = findWithdrawalRequestPda(config2, user1, 0, CORE_PROGRAM_ID);
+      expect(pdaC.toBase58()).to.not.equal(pdaD.toBase58());
+
+      // Same user+config, different nonces
+      const [pdaE] = findWithdrawalRequestPda(config, user1, 0, CORE_PROGRAM_ID);
+      const [pdaF] = findWithdrawalRequestPda(config, user1, 1, CORE_PROGRAM_ID);
+      expect(pdaE.toBase58()).to.not.equal(pdaF.toBase58());
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 7. Diamond Tier Caps
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("diamond tier caps", () => {

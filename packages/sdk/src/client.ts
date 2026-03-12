@@ -59,6 +59,7 @@ export interface BondVaultExtended {
   lastAttestationAt: bigint;
   attestedReserve: bigint;
   attestationMaxStaleness: bigint;
+  allowImmediateWithdraw: boolean;
 }
 
 export interface StablebondProgramIds {
@@ -922,6 +923,8 @@ export class StablebondClient {
     const attestedReserve = data.readBigUInt64LE(offset);
     offset += 8;
     const attestationMaxStaleness = data.readBigInt64LE(offset);
+    offset += 8;
+    const allowImmediateWithdraw = data[offset] !== 0;
 
     return {
       authority,
@@ -947,6 +950,7 @@ export class StablebondClient {
       lastAttestationAt,
       attestedReserve,
       attestationMaxStaleness,
+      allowImmediateWithdraw,
     };
   }
 

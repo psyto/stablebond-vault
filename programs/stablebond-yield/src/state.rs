@@ -54,6 +54,10 @@ pub struct BondVault {
     pub attested_reserve: u64,
     /// Maximum staleness for reserve attestation (seconds). Accrual pauses if stale.
     pub attestation_max_staleness: i64,
+    /// Whether legacy immediate withdrawals are allowed (default: false).
+    /// When false, users must use the cooldown-based withdrawal flow.
+    /// Authority can toggle this for emergency use.
+    pub allow_immediate_withdraw: bool,
 }
 
 impl BondVault {
@@ -80,7 +84,8 @@ impl BondVault {
         + 32  // reserve_attestor
         + 8   // last_attestation_at
         + 8   // attested_reserve
-        + 8;  // attestation_max_staleness
+        + 8   // attestation_max_staleness
+        + 1;  // allow_immediate_withdraw
 
     pub const SEED: &'static [u8] = b"bond_vault";
     pub const CURRENCY_VAULT_SEED: &'static [u8] = b"bond_currency_vault";
