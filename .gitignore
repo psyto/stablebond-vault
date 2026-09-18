@@ -2,3 +2,6 @@ node_modules/
 target/
 .next/
 .anchor/
+
+# Third-party whitepapers kept locally for reference, not redistributed
+docs/references/*.pdf
