@@ -40,6 +40,7 @@ describe("stablebond-core", () => {
   let registryPda: PublicKey;
   let usdcVaultPda: PublicKey;
   let oracleFeed: Keypair;
+  const kycWhitelistRegistry = Keypair.generate().publicKey;
 
   before(async () => {
     provider = anchor.AnchorProvider.env();
@@ -58,9 +59,13 @@ describe("stablebond-core", () => {
     it("initializes the protocol config and bond registry", async () => {
       await coreProgram.methods
         .initializeProtocol({
+          treasury: ctx.treasury.publicKey,
+          kycRegistry: Keypair.generate().publicKey,
+          sovereignProgram: Keypair.generate().publicKey,
           conversionFeeBps: 30,
           managementFeeBps: 100,
           performanceFeeBps: 1000,
+          kycWhitelistRegistry: kycWhitelistRegistry,
           keeper: ctx.keeper.publicKey,
         })
         .accounts({
@@ -69,8 +74,6 @@ describe("stablebond-core", () => {
           bondRegistry: registryPda,
           usdcMint: ctx.usdcMint,
           usdcVault: usdcVaultPda,
-          treasury: ctx.treasury.publicKey,
-          sovereignProgram: Keypair.generate().publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
@@ -88,6 +91,7 @@ describe("stablebond-core", () => {
       expect(config.isActive).to.be.true;
       expect(config.numSupportedBonds).to.equal(0);
       expect(config.keeper.toBase58()).to.equal(ctx.keeper.publicKey.toBase58());
+      expect(config.kycWhitelistRegistry.toBase58()).to.equal(kycWhitelistRegistry.toBase58());
     });
   });
 
@@ -299,6 +303,129 @@ describe("stablebond-core", () => {
       expect(config.conversionFeeBps).to.equal(50);
       expect(config.managementFeeBps).to.equal(150);
       expect(config.performanceFeeBps).to.equal(1500);
+    });
+  });
+
+  describe("keeper role", () => {
+    const stranger = Keypair.generate();
+    let yieldSourcePda: PublicKey;
+    let bondVaultPda: PublicKey;
+
+    before(async () => {
+      const sig = await ctx.connection.requestAirdrop(stranger.publicKey, 1_000_000_000);
+      await ctx.connection.confirmTransaction(sig);
+
+      // A US T-Bill yield source and the authority's stablebond-yield vault for it,
+      // so update_nav's accounts resolve and only the keeper check decides.
+      [yieldSourcePda] = findYieldSourcePda(configPda, ctx.usdcMint, coreProgram.programId);
+      await coreProgram.methods
+        .registerYieldSource({
+          name: Array(32).fill(0),
+          sourceType: { sovereignBond: {} },
+          bondType: BondType.UsTBill,
+          depositVault: usdcVaultPda,
+          yieldTokenVault: usdcVaultPda,
+          currencyMint: ctx.usdcMint,
+          oracleFeed: oracleFeed.publicKey,
+          couponRateBps: 450,
+          maturityDate: new BN(0),
+          haircutBps: 0,
+          allocationWeightBps: 10_000,
+          minDeposit: new BN(0),
+          maxAllocation: new BN(0),
+        })
+        .accounts({
+          authority: ctx.authority.publicKey,
+          protocolConfig: configPda,
+          tokenMint: ctx.usdcMint,
+          yieldSource: yieldSourcePda,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([ctx.authority])
+        .rpc();
+
+      [bondVaultPda] = findBondVaultPda(ctx.authority.publicKey, BOND_TYPE_U8.UsTBill, yieldProgram.programId);
+      const [shareMintPda] = findBondShareMintPda(ctx.authority.publicKey, BOND_TYPE_U8.UsTBill, yieldProgram.programId);
+      const [currencyVaultPda] = findBondCurrencyVaultPda(ctx.authority.publicKey, BOND_TYPE_U8.UsTBill, yieldProgram.programId);
+      await yieldProgram.methods
+        .initializeVault(BondType.UsTBill, 450, 450, new BN(0))
+        .accounts({
+          authority: ctx.authority.publicKey,
+          vaultConfig: bondVaultPda,
+          currencyMint: ctx.usdcMint,
+          shareMint: shareMintPda,
+          currencyVault: currencyVaultPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([ctx.authority])
+        .rpc();
+    });
+
+    it("rejects set_keeper from a non-authority", async () => {
+      try {
+        await coreProgram.methods
+          .setKeeper(stranger.publicKey)
+          .accounts({ authority: stranger.publicKey, protocolConfig: configPda })
+          .signers([stranger])
+          .rpc();
+        expect.fail("Should have thrown Unauthorized");
+      } catch (err: any) {
+        expect(err.toString()).to.match(/Unauthorized|6001/);
+      }
+      const config = await coreProgram.account.protocolConfig.fetch(configPda);
+      expect(config.keeper.toBase58()).to.equal(ctx.keeper.publicKey.toBase58());
+    });
+
+    it("rejects update_nav from a signer that is neither keeper nor authority", async () => {
+      try {
+        await coreProgram.methods
+          .updateNav()
+          .accounts({
+            keeper: stranger.publicKey,
+            protocolConfig: configPda,
+            yieldSource: yieldSourcePda,
+            bondVaultConfig: bondVaultPda,
+          })
+          .signers([stranger])
+          .rpc();
+        expect.fail("Should have thrown Unauthorized");
+      } catch (err: any) {
+        expect(err.toString()).to.match(/Unauthorized|6001/);
+      }
+    });
+
+    it("accepts update_nav from the configured keeper", async () => {
+      await coreProgram.methods
+        .updateNav()
+        .accounts({
+          keeper: ctx.keeper.publicKey,
+          protocolConfig: configPda,
+          yieldSource: yieldSourcePda,
+          bondVaultConfig: bondVaultPda,
+        })
+        .signers([ctx.keeper])
+        .rpc();
+    });
+
+    it("lets the authority change the keeper", async () => {
+      const next = Keypair.generate().publicKey;
+      await coreProgram.methods
+        .setKeeper(next)
+        .accounts({ authority: ctx.authority.publicKey, protocolConfig: configPda })
+        .signers([ctx.authority])
+        .rpc();
+      let config = await coreProgram.account.protocolConfig.fetch(configPda);
+      expect(config.keeper.toBase58()).to.equal(next.toBase58());
+
+      await coreProgram.methods
+        .setKeeper(ctx.keeper.publicKey)
+        .accounts({ authority: ctx.authority.publicKey, protocolConfig: configPda })
+        .signers([ctx.authority])
+        .rpc();
+      config = await coreProgram.account.protocolConfig.fetch(configPda);
+      expect(config.keeper.toBase58()).to.equal(ctx.keeper.publicKey.toBase58());
     });
   });
 
