@@ -183,6 +183,15 @@ Four automated services in `packages/sdk/src/keeper/`, all exported from `@stabl
 | `ReserveAttestor` | Fetch custodian reserves and submit on-chain attestations | 1 hour |
 | `ConversionBot` | Watch for pending cross-currency deposits and execute conversions | 10s |
 
+`NavUpdater` and `ConversionBot` must run with the protocol authority keypair as `keeper`:
+`update_nav` and `execute_conversion` require `keeper == ProtocolConfig.authority`.
+`update_nav` reads NAV only from the stablebond-yield `BondVault` PDA
+`["bond_vault", authority, bond_type]`.
+
+`deposit_cross_currency` takes the `bond_registry` PDA; `source_mint` must be the active
+`currency_mint` registered for the bond type, and `source_vault` must be the protocol config
+PDA's associated token account for that mint (create it idempotently before the first deposit).
+
 ```typescript
 import { NavUpdater, OracleBridge, ReserveAttestor, ConversionBot } from "@stablebond/sdk";
 

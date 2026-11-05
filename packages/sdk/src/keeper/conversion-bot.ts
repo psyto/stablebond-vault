@@ -1,5 +1,5 @@
 import { Program, BN } from "@coral-xyz/anchor";
-import { Connection, PublicKey, Keypair } from "@solana/web3.js";
+import { Connection, PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { BondType } from "@stablebond/types";
 import {
@@ -16,6 +16,9 @@ import {
  * and calls executeConversion on them. This is a multi-bond generalization
  * of the Exodus single-currency conversion bot — it handles all bond types
  * and their respective oracle feeds.
+ *
+ * `keeper` must be the protocol authority (ProtocolConfig.authority):
+ * stablebond-core's execute_conversion rejects any other signer.
  */
 export class ConversionBot {
   private connection: Connection;
@@ -148,12 +151,37 @@ export class ConversionBot {
     );
     const [usdcVault] = findUsdcVaultPda(this.programId);
 
-    // Read yield source for this bond type's oracle feed
     const configInfo = await this.connection.getAccountInfo(configPda);
     if (!configInfo) {
       console.warn("[ConversionBot] Protocol config not found, skipping");
       return;
     }
+    const authority = new PublicKey(configInfo.data.subarray(8, 40));
+    if (!authority.equals(this.keeper.publicKey)) {
+      throw new Error(
+        `[ConversionBot] keeper ${this.keeper.publicKey.toBase58()} is not the protocol authority ${authority.toBase58()}`
+      );
+    }
+
+    // Yield source for this bond type (same lookup as NavUpdater: registry currency_mint)
+    const registry: any = await (this.program.account as any).bondRegistry.fetch(
+      findBondRegistryPda(configPda, this.programId)[0]
+    );
+    const bond = registry.bonds.find(
+      (b: any) => Object.keys(b.bondType)[0].toLowerCase() === BondType[bondType].toLowerCase()
+    );
+    if (!bond) {
+      console.warn(`[ConversionBot] Bond ${BondType[bondType]} not registered, skipping`);
+      return;
+    }
+    const [yieldSourcePda] = findYieldSourcePda(
+      configPda,
+      bond.currencyMint,
+      this.programId
+    );
+    const yieldSource: any = await (this.program.account as any).yieldSource.fetch(
+      yieldSourcePda
+    );
 
     console.log(
       `[ConversionBot] Executing conversion for deposit ${pendingDepositPda.toBase58()} ` +
@@ -167,10 +195,13 @@ export class ConversionBot {
         protocolConfig: configPda,
         pendingDeposit: pendingDepositPda,
         userPosition: userPositionPda,
-        conversionRecord: conversionRecordPda,
-        user,
         usdcVault,
+        oracle: yieldSource.oracleFeed,
+        yieldSource: yieldSourcePda,
+        yieldDepositVault: yieldSource.depositVault,
+        conversionRecord: conversionRecordPda,
         tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
       })
       .signers([this.keeper])
       .rpc();

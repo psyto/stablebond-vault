@@ -69,6 +69,7 @@ pub struct ExecuteConversion<'info> {
             yield_source.token_mint.as_ref(),
         ],
         bump = yield_source.bump,
+        constraint = yield_source.bond_type == pending_deposit.bond_type @ StablebondError::BondTypeNotFound,
     )]
     pub yield_source: Box<Account<'info, YieldSource>>,
 

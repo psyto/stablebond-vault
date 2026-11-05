@@ -15,6 +15,9 @@ import {
  * NavUpdater is a keeper bot that iterates over all active bond vaults,
  * calls accrueYield on each vault, and then updates NAV on the core program.
  * Generalized from the Exodus single-vault NavUpdater to support multi-bond.
+ *
+ * `keeper` must be the protocol authority (ProtocolConfig.authority):
+ * stablebond-core's update_nav rejects any other signer.
  */
 export class NavUpdater {
   private connection: Connection;
@@ -180,6 +183,13 @@ export class NavUpdater {
       return;
     }
 
+    if (!authority.equals(this.keeper.publicKey)) {
+      throw new Error(
+        `[NavUpdater] keeper ${this.keeper.publicKey.toBase58()} is not the protocol authority ${authority.toBase58()}`
+      );
+    }
+
+    // update_nav requires the BondVault PDA the protocol authority opened for this bond type
     const [bondVaultPda] = findBondVaultPda(
       authority,
       bond.bondType,
@@ -192,8 +202,7 @@ export class NavUpdater {
         keeper: this.keeper.publicKey,
         protocolConfig: configPda,
         yieldSource: yieldSourcePda,
-        bondVault: bondVaultPda,
-        bondVaultProgram: this.yieldProgramId,
+        bondVaultConfig: bondVaultPda,
       })
       .signers([this.keeper])
       .rpc();

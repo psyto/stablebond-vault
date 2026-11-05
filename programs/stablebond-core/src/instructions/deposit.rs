@@ -4,7 +4,7 @@ use stablebond_types::{allowed_bond_types, monthly_limit, allowed_yield_sources,
 
 use crate::errors::StablebondError;
 use crate::events::{DepositInitiated, DirectDeposit};
-use crate::state::{PendingDeposit, ProtocolConfig, UserPosition, YieldSource};
+use crate::state::{BondRegistry, PendingDeposit, ProtocolConfig, UserPosition, YieldSource};
 
 /// Accredit transfer-hook WhitelistEntry PDA prefix: ["whitelist", wallet]
 const WHITELIST_SEED: &[u8] = b"whitelist";
@@ -26,8 +26,16 @@ pub struct DepositCrossCurrency<'info> {
     )]
     pub protocol_config: Account<'info, ProtocolConfig>,
 
+    /// Registered bonds; source_mint must be the active currency_mint of bond_type
+    #[account(
+        seeds = [BondRegistry::SEED, protocol_config.key().as_ref()],
+        bump = bond_registry.bump,
+        constraint = bond_registry.protocol_config == protocol_config.key() @ StablebondError::InvalidAccountData,
+    )]
+    pub bond_registry: Box<Account<'info, BondRegistry>>,
+
     /// Source currency mint (e.g. JPY, MXN, BRL stablecoin)
-    /// CHECK: Both token accounts below are constrained to this mint.
+    /// CHECK: Checked against bond_registry in the handler; both token accounts below use this mint.
     pub source_mint: AccountInfo<'info>,
 
     /// User's source currency token account
@@ -38,11 +46,12 @@ pub struct DepositCrossCurrency<'info> {
     )]
     pub user_source_ata: Box<Account<'info, TokenAccount>>,
 
-    /// Protocol vault for the source currency (held by the protocol config PDA)
+    /// Protocol vault for the source currency: the protocol config PDA's
+    /// associated token account for source_mint (must already exist).
     #[account(
         mut,
-        token::mint = source_mint,
-        token::authority = protocol_config,
+        associated_token::mint = source_mint,
+        associated_token::authority = protocol_config,
     )]
     pub source_vault: Box<Account<'info, TokenAccount>>,
 
@@ -223,6 +232,15 @@ pub fn handle_deposit_cross_currency(
     let config = &ctx.accounts.protocol_config;
     require!(config.is_active, StablebondError::ProtocolNotActive);
     require!(amount > 0, StablebondError::ZeroDeposit);
+
+    // 0. source_mint must be the registered, active currency of this bond type
+    let source_mint = ctx.accounts.source_mint.key();
+    require!(
+        ctx.accounts.bond_registry.bonds.iter().any(|b| {
+            b.bond_type == bond_type && b.is_active && b.currency_mint == source_mint
+        }),
+        StablebondError::BondTypeNotFound
+    );
 
     // 1. Validate KYC via Accredit WhitelistEntry
     validate_kyc(&ctx.accounts.whitelist_entry, &ctx.accounts.user.key())?;
