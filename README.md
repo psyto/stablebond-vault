@@ -59,6 +59,26 @@ tests/                 Anchor integration tests (~35 test cases across 2 suites)
 | `submit_reserve_attestation` | Attestor: submit proof-of-reserve amount |
 | `set_immediate_withdraw` | Admin: toggle legacy immediate withdrawal (emergency use) |
 
+## Setup and Deploy Order
+
+1. **Accredit first.** Deploy the Accredit program and create the KYC registry whose whitelist
+   entries this protocol should accept. Whitelist depositors in that registry.
+2. Deploy `stablebond-yield` and `stablebond-core`.
+3. Run `initialize_protocol` once with `InitializeProtocolParams`:
+   `treasury`, `kyc_registry` (Accredit program id), `sovereign_program`, the three fees,
+   `kyc_whitelist_registry` (the Accredit registry account from step 1) and `keeper`.
+4. Create the stablebond-yield `BondVault` for each bond type with the protocol authority
+   (`update_nav` reads `["bond_vault", authority, bond_type]`), then `register_bond` /
+   `register_yield_source`.
+5. Run `NavUpdater` / `ConversionBot` with the keeper keypair.
+
+### Upgrading an existing deployment
+
+`ProtocolConfig` gained `kyc_whitelist_registry` and `keeper` (appended; `ProtocolConfig::LEN` is
+now 354 bytes) and `initialize_protocol` takes both as params. A `ProtocolConfig` created by an
+older build is too small for the new program: recreate the protocol state (`initialize_protocol`
+on a fresh deployment). Clients must derive whitelist entries with the registry in the seeds.
+
 ## Withdrawal Flow
 
 Withdrawals use a **cooldown-based flow** by default:
@@ -197,8 +217,15 @@ PDA's associated token account for that mint (create it idempotently before the 
 
 Both deposit paths accept only an Accredit `WhitelistEntry` at
 `["whitelist", kyc_whitelist_registry, user]` under `ProtocolConfig.kyc_registry` (the Accredit
-transfer-hook program) whose `registry` field equals `ProtocolConfig.kyc_whitelist_registry`, set by
-`initialize_protocol`.
+program) whose `registry` field equals `ProtocolConfig.kyc_whitelist_registry`, set by
+`initialize_protocol`. The entry must belong to the depositing wallet, be active and not expired
+(expiry 0 = no expiry); US-jurisdiction entries are rejected. Use
+`findAccreditWhitelistEntryPda(kycWhitelistRegistry, wallet, accreditProgramId)` from the SDK to
+derive it. The tier is read from the user's Sovereign identity (`["identity", user]` under
+`ProtocolConfig.sovereign_program`).
+
+`deposit_cross_currency` moves tokens with the SPL Token program only (`token_program` must be
+the Token program).
 
 ```typescript
 import { NavUpdater, OracleBridge, ReserveAttestor, ConversionBot } from "@stablebond/sdk";
