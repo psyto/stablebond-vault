@@ -682,6 +682,8 @@ export class StablebondClient {
     const usdcVaultBump = data[offset];
     offset += 1;
     const kycWhitelistRegistry = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const keeper = new PublicKey(data.subarray(offset, offset + 32));
 
     return {
       authority,
@@ -705,6 +707,7 @@ export class StablebondClient {
       updatedAt,
       bump,
       usdcVaultBump,
+      keeper,
     };
   }
 

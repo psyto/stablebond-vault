@@ -47,6 +47,8 @@ pub struct ProtocolConfig {
     /// Accredit KycRegistry account whose whitelist entries are trusted
     /// (WhitelistEntry.registry must equal this)
     pub kyc_whitelist_registry: Pubkey,
+    /// Keeper allowed to run update_nav / execute_conversion (set by authority)
+    pub keeper: Pubkey,
 }
 
 impl ProtocolConfig {
@@ -71,8 +73,14 @@ impl ProtocolConfig {
         + 8   // updated_at
         + 1   // bump
         + 1   // usdc_vault_bump
-        + 32; // kyc_whitelist_registry
+        + 32  // kyc_whitelist_registry
+        + 32; // keeper
 
     pub const SEED: &'static [u8] = b"stablebond_config";
     pub const USDC_VAULT_SEED: &'static [u8] = b"stablebond_usdc_vault";
+
+    /// The configured keeper, or the authority, may run keeper instructions.
+    pub fn is_keeper(&self, key: &Pubkey) -> bool {
+        *key == self.keeper || *key == self.authority
+    }
 }

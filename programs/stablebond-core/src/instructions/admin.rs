@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::StablebondError;
-use crate::events::{ProtocolPaused, ProtocolResumed};
+use crate::events::{KeeperUpdated, ProtocolPaused, ProtocolResumed};
 use crate::state::{ProtocolConfig, YieldSource};
 
 // ─── Update Protocol Config ────────────────────────────────────────────────────
@@ -52,6 +52,38 @@ pub fn handle_update_protocol_config(
 
     config.updated_at = now;
     msg!("Protocol config updated");
+    Ok(())
+}
+
+// ─── Set Keeper ─────────────────────────────────────────────────────────────────
+
+#[derive(Accounts)]
+pub struct SetKeeper<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [ProtocolConfig::SEED],
+        bump = protocol_config.bump,
+        has_one = authority @ StablebondError::Unauthorized,
+    )]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+}
+
+pub fn handle_set_keeper(ctx: Context<SetKeeper>, new_keeper: Pubkey) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let config = &mut ctx.accounts.protocol_config;
+    let old_keeper = config.keeper;
+    config.keeper = new_keeper;
+    config.updated_at = now;
+
+    emit!(KeeperUpdated {
+        old_keeper,
+        new_keeper,
+        timestamp: now,
+    });
+
+    msg!("Keeper updated");
     Ok(())
 }
 

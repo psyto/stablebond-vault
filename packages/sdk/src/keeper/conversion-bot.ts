@@ -17,8 +17,9 @@ import {
  * of the Exodus single-currency conversion bot — it handles all bond types
  * and their respective oracle feeds.
  *
- * `keeper` must be the protocol authority (ProtocolConfig.authority):
- * stablebond-core's execute_conversion rejects any other signer.
+ * `keeper` must be ProtocolConfig.keeper (set by the authority with
+ * set_keeper) or the protocol authority: stablebond-core's execute_conversion
+ * rejects any other signer.
  */
 export class ConversionBot {
   private connection: Connection;
@@ -157,9 +158,14 @@ export class ConversionBot {
       return;
     }
     const authority = new PublicKey(configInfo.data.subarray(8, 40));
-    if (!authority.equals(this.keeper.publicKey)) {
+    // ProtocolConfig.keeper sits after kyc_whitelist_registry (bytes 322..354)
+    const configKeeper = new PublicKey(configInfo.data.subarray(322, 354));
+    if (
+      !configKeeper.equals(this.keeper.publicKey) &&
+      !authority.equals(this.keeper.publicKey)
+    ) {
       throw new Error(
-        `[ConversionBot] keeper ${this.keeper.publicKey.toBase58()} is not the protocol authority ${authority.toBase58()}`
+        `[ConversionBot] keeper ${this.keeper.publicKey.toBase58()} is neither the configured keeper ${configKeeper.toBase58()} nor the protocol authority ${authority.toBase58()}`
       );
     }
 

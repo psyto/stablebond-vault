@@ -131,3 +131,10 @@ pub struct ProtocolResumed {
     pub authority: Pubkey,
     pub timestamp: i64,
 }
+
+#[event]
+pub struct KeeperUpdated {
+    pub old_keeper: Pubkey,
+    pub new_keeper: Pubkey,
+    pub timestamp: i64,
+}

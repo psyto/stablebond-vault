@@ -61,6 +61,7 @@ describe("stablebond-core", () => {
           conversionFeeBps: 30,
           managementFeeBps: 100,
           performanceFeeBps: 1000,
+          keeper: ctx.keeper.publicKey,
         })
         .accounts({
           authority: ctx.authority.publicKey,
@@ -86,6 +87,7 @@ describe("stablebond-core", () => {
       expect(config.performanceFeeBps).to.equal(1000);
       expect(config.isActive).to.be.true;
       expect(config.numSupportedBonds).to.equal(0);
+      expect(config.keeper.toBase58()).to.equal(ctx.keeper.publicKey.toBase58());
     });
   });
 

@@ -24,6 +24,8 @@ export interface ProtocolConfig {
   usdcVaultBump: number;
   /** Accredit KycRegistry whose whitelist entries deposits accept */
   kycWhitelistRegistry: PublicKey;
+  /** Keeper allowed to run update_nav / execute_conversion (the authority may too) */
+  keeper: PublicKey;
 }
 
 export interface YieldSourceAccount {

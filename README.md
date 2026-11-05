@@ -39,6 +39,7 @@ tests/                 Anchor integration tests (~35 test cases across 2 suites)
 | `claim_yield` | Claim accrued yield for a bond position |
 | `update_nav` | Update NAV from yield vault |
 | `update_protocol_config` | Admin: update fee settings |
+| `set_keeper` | Admin: set the keeper allowed to run `update_nav` / `execute_conversion` |
 | `update_yield_source` | Admin: update yield source config |
 | `pause_protocol` | Admin: pause all operations |
 | `resume_protocol` | Admin: resume operations |
@@ -183,8 +184,10 @@ Four automated services in `packages/sdk/src/keeper/`, all exported from `@stabl
 | `ReserveAttestor` | Fetch custodian reserves and submit on-chain attestations | 1 hour |
 | `ConversionBot` | Watch for pending cross-currency deposits and execute conversions | 10s |
 
-`NavUpdater` and `ConversionBot` must run with the protocol authority keypair as `keeper`:
-`update_nav` and `execute_conversion` require `keeper == ProtocolConfig.authority`.
+`NavUpdater` and `ConversionBot` must run with the configured keeper keypair as `keeper`:
+`update_nav` and `execute_conversion` require `keeper == ProtocolConfig.keeper` (or the
+protocol authority). The authority sets the keeper in `initialize_protocol` (`params.keeper`)
+and can change it with `set_keeper`.
 `update_nav` reads NAV only from the stablebond-yield `BondVault` PDA
 `["bond_vault", authority, bond_type]`.
 

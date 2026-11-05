@@ -16,9 +16,9 @@ const BOND_VAULT_APY_OFFSET: usize = 8 + 32 + 32 + 32 + 32 + 1 + 2 + 8;
 
 #[derive(Accounts)]
 pub struct UpdateNav<'info> {
-    /// Keeper that triggers the NAV update (the protocol authority)
+    /// Keeper that triggers the NAV update (ProtocolConfig.keeper or authority)
     #[account(
-        constraint = keeper.key() == protocol_config.authority @ StablebondError::Unauthorized,
+        constraint = protocol_config.is_keeper(&keeper.key()) @ StablebondError::Unauthorized,
     )]
     pub keeper: Signer<'info>,
 

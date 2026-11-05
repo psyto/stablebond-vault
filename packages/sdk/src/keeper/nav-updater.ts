@@ -16,8 +16,9 @@ import {
  * calls accrueYield on each vault, and then updates NAV on the core program.
  * Generalized from the Exodus single-vault NavUpdater to support multi-bond.
  *
- * `keeper` must be the protocol authority (ProtocolConfig.authority):
- * stablebond-core's update_nav rejects any other signer.
+ * `keeper` must be ProtocolConfig.keeper (set by the authority with
+ * set_keeper) or the protocol authority: stablebond-core's update_nav
+ * rejects any other signer.
  */
 export class NavUpdater {
   private connection: Connection;
@@ -183,9 +184,14 @@ export class NavUpdater {
       return;
     }
 
-    if (!authority.equals(this.keeper.publicKey)) {
+    // ProtocolConfig.keeper sits after kyc_whitelist_registry (bytes 322..354)
+    const configKeeper = new PublicKey(configInfo.data.subarray(322, 354));
+    if (
+      !configKeeper.equals(this.keeper.publicKey) &&
+      !authority.equals(this.keeper.publicKey)
+    ) {
       throw new Error(
-        `[NavUpdater] keeper ${this.keeper.publicKey.toBase58()} is not the protocol authority ${authority.toBase58()}`
+        `[NavUpdater] keeper ${this.keeper.publicKey.toBase58()} is neither the configured keeper ${configKeeper.toBase58()} nor the protocol authority ${authority.toBase58()}`
       );
     }
 

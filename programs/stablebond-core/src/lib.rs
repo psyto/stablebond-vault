@@ -105,6 +105,11 @@ pub mod stablebond_core {
         instructions::admin::handle_update_protocol_config(ctx, params)
     }
 
+    /// Set the keeper allowed to run update_nav / execute_conversion (authority only).
+    pub fn set_keeper(ctx: Context<SetKeeper>, new_keeper: Pubkey) -> Result<()> {
+        instructions::admin::handle_set_keeper(ctx, new_keeper)
+    }
+
     pub fn update_yield_source(
         ctx: Context<UpdateYieldSource>,
         params: UpdateYieldSourceParams,
