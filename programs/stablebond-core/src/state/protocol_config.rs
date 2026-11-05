@@ -44,6 +44,9 @@ pub struct ProtocolConfig {
     pub bump: u8,
     /// USDC vault PDA bump
     pub usdc_vault_bump: u8,
+    /// Accredit KycRegistry account whose whitelist entries are trusted
+    /// (WhitelistEntry.registry must equal this)
+    pub kyc_whitelist_registry: Pubkey,
 }
 
 impl ProtocolConfig {
@@ -67,7 +70,8 @@ impl ProtocolConfig {
         + 8   // created_at
         + 8   // updated_at
         + 1   // bump
-        + 1;  // usdc_vault_bump
+        + 1   // usdc_vault_bump
+        + 32; // kyc_whitelist_registry
 
     pub const SEED: &'static [u8] = b"stablebond_config";
     pub const USDC_VAULT_SEED: &'static [u8] = b"stablebond_usdc_vault";

@@ -13,6 +13,8 @@ pub struct InitializeProtocolParams {
     pub conversion_fee_bps: u16,
     pub management_fee_bps: u16,
     pub performance_fee_bps: u16,
+    /// Accredit KycRegistry account whose whitelist entries deposits accept
+    pub kyc_whitelist_registry: Pubkey,
 }
 
 #[derive(Accounts)]
@@ -84,6 +86,7 @@ pub fn handle_initialize_protocol(ctx: Context<InitializeProtocol>, params: Init
     config.updated_at = now;
     config.bump = ctx.bumps.protocol_config;
     config.usdc_vault_bump = ctx.bumps.usdc_vault;
+    config.kyc_whitelist_registry = params.kyc_whitelist_registry;
 
     // Initialize bond registry
     let registry = &mut ctx.accounts.bond_registry;

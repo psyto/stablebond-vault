@@ -187,38 +187,66 @@ pub struct DepositDirect<'info> {
 
 // ─── Shared KYC/Tier validation (same pattern as Exodus) ────────────────────
 
-/// Validate KYC via Accredit WhitelistEntry (manual deserialization).
-fn validate_kyc(whitelist_entry: &AccountInfo, user: &Pubkey) -> Result<()> {
+// Accredit transfer-hook WhitelistEntry layout (after the 8-byte discriminator):
+// wallet(32) registry(32) kyc_level(1) jurisdiction(1) kyc_hash(32) is_active(1)
+// daily_limit(8) daily_volume(8) volume_reset_time(8) verified_at(8)
+// expiry_timestamp(8) last_activity(8) created_at(8) bump(1)
+const WL_OFFSET_WALLET: usize = 8;
+const WL_OFFSET_REGISTRY: usize = 8 + 32; // 40
+const WL_OFFSET_JURISDICTION: usize = 8 + 32 + 32 + 1; // 73
+const WL_OFFSET_IS_ACTIVE: usize = 8 + 32 + 32 + 1 + 1 + 32; // 106
+const WL_OFFSET_EXPIRY: usize = WL_OFFSET_IS_ACTIVE + 1 + 8 + 8 + 8 + 8; // 139
+const WL_MIN_SIZE: usize = WL_OFFSET_EXPIRY + 8 + 8 + 8 + 1; // 164
+/// Accredit Jurisdiction::Usa
+const JURISDICTION_USA: u8 = 4;
+
+// Sovereign SovereignIdentity layout: owner(32) created_at(8) 5 authorities(32 each)
+// 6 scores(u16 each) tier(u8) ...
+const SOV_OFFSET_OWNER: usize = 8;
+const SOV_OFFSET_TIER: usize = 8 + 32 + 8 + 32 * 5 + 2 * 6; // 220
+
+/// Validate KYC via an Accredit WhitelistEntry (owner program and PDA are
+/// pinned by the account constraints; the entry must come from `registry`).
+fn validate_kyc(whitelist_entry: &AccountInfo, user: &Pubkey, registry: &Pubkey) -> Result<()> {
     let data = whitelist_entry.try_borrow_data()?;
-    require!(data.len() >= 83, StablebondError::KycRequired);
+    require!(data.len() >= WL_MIN_SIZE, StablebondError::KycRequired);
 
-    // Skip 8-byte discriminator
-    let owner = Pubkey::try_from(&data[8..40]).map_err(|_| StablebondError::InvalidAccountData)?;
-    require!(owner == *user, StablebondError::KycRequired);
+    let wallet = Pubkey::try_from(&data[WL_OFFSET_WALLET..WL_OFFSET_WALLET + 32])
+        .map_err(|_| StablebondError::InvalidAccountData)?;
+    require!(wallet == *user, StablebondError::KycRequired);
 
-    let is_active = data[72] != 0;
-    require!(is_active, StablebondError::KycRequired);
+    let entry_registry = Pubkey::try_from(&data[WL_OFFSET_REGISTRY..WL_OFFSET_REGISTRY + 32])
+        .map_err(|_| StablebondError::InvalidAccountData)?;
+    require!(entry_registry == *registry, StablebondError::KycRequired);
 
-    let jurisdiction = data[74];
-    // Block USA jurisdiction (value 4 in Accredit)
-    require!(jurisdiction != 4, StablebondError::JurisdictionRestricted);
+    require!(data[WL_OFFSET_IS_ACTIVE] == 1, StablebondError::KycRequired);
 
-    let expires_at = i64::from_le_bytes(data[75..83].try_into().unwrap());
-    let now = Clock::get()?.unix_timestamp;
-    require!(expires_at > now, StablebondError::KycExpired);
+    require!(
+        data[WL_OFFSET_JURISDICTION] != JURISDICTION_USA,
+        StablebondError::JurisdictionRestricted
+    );
+
+    // Accredit semantics: expiry 0 = no expiry
+    let expires_at = i64::from_le_bytes(
+        data[WL_OFFSET_EXPIRY..WL_OFFSET_EXPIRY + 8].try_into().unwrap(),
+    );
+    if expires_at != 0 {
+        require!(expires_at > Clock::get()?.unix_timestamp, StablebondError::KycExpired);
+    }
 
     Ok(())
 }
 
-/// Read sovereign tier from SovereignIdentity PDA (manual deserialization).
+/// Read the tier from a Sovereign SovereignIdentity PDA.
 fn read_sovereign_tier(sovereign_identity: &AccountInfo, user: &Pubkey) -> Result<u8> {
     let data = sovereign_identity.try_borrow_data()?;
-    require!(data.len() >= 41, StablebondError::SovereignIdentityNotFound);
+    require!(data.len() > SOV_OFFSET_TIER, StablebondError::SovereignIdentityNotFound);
 
-    let owner = Pubkey::try_from(&data[8..40]).map_err(|_| StablebondError::InvalidAccountData)?;
+    let owner = Pubkey::try_from(&data[SOV_OFFSET_OWNER..SOV_OFFSET_OWNER + 32])
+        .map_err(|_| StablebondError::InvalidAccountData)?;
     require!(owner == *user, StablebondError::SovereignIdentityNotFound);
 
-    Ok(data[40])
+    Ok(data[SOV_OFFSET_TIER])
 }
 
 // ─── Cross-currency deposit handler ─────────────────────────────────────────
@@ -243,7 +271,11 @@ pub fn handle_deposit_cross_currency(
     );
 
     // 1. Validate KYC via Accredit WhitelistEntry
-    validate_kyc(&ctx.accounts.whitelist_entry, &ctx.accounts.user.key())?;
+    validate_kyc(
+        &ctx.accounts.whitelist_entry,
+        &ctx.accounts.user.key(),
+        &config.kyc_whitelist_registry,
+    )?;
 
     // 2. Read Sovereign tier and validate bond type access
     let tier = read_sovereign_tier(&ctx.accounts.sovereign_identity, &ctx.accounts.user.key())?;
@@ -367,7 +399,11 @@ pub fn handle_deposit_direct(
     require!(ys.bond_type == bond_type, StablebondError::BondTypeNotFound);
 
     // KYC check
-    validate_kyc(&ctx.accounts.whitelist_entry, &ctx.accounts.user.key())?;
+    validate_kyc(
+        &ctx.accounts.whitelist_entry,
+        &ctx.accounts.user.key(),
+        &config.kyc_whitelist_registry,
+    )?;
 
     // Sovereign tier check
     let tier = read_sovereign_tier(&ctx.accounts.sovereign_identity, &ctx.accounts.user.key())?;

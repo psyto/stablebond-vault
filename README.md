@@ -192,6 +192,10 @@ Four automated services in `packages/sdk/src/keeper/`, all exported from `@stabl
 `currency_mint` registered for the bond type, and `source_vault` must be the protocol config
 PDA's associated token account for that mint (create it idempotently before the first deposit).
 
+Both deposit paths accept only an Accredit `WhitelistEntry` at `["whitelist", user]` under
+`ProtocolConfig.kyc_registry` (the Accredit transfer-hook program) whose `registry` field equals
+`ProtocolConfig.kyc_whitelist_registry`, set by `initialize_protocol`.
+
 ```typescript
 import { NavUpdater, OracleBridge, ReserveAttestor, ConversionBot } from "@stablebond/sdk";
 
