@@ -161,3 +161,19 @@ export function findWithdrawalRequestPda(
     programId
   );
 }
+
+/**
+ * Accredit WhitelistEntry PDA the deposit instructions expect:
+ * ["whitelist", kycWhitelistRegistry, wallet] under the Accredit
+ * transfer-hook program (ProtocolConfig.kyc_registry).
+ */
+export function findAccreditWhitelistEntryPda(
+  kycWhitelistRegistry: PublicKey,
+  wallet: PublicKey,
+  accreditProgramId: PublicKey
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("whitelist"), kycWhitelistRegistry.toBuffer(), wallet.toBuffer()],
+    accreditProgramId
+  );
+}

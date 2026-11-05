@@ -6,7 +6,7 @@ use crate::errors::StablebondError;
 use crate::events::{DepositInitiated, DirectDeposit};
 use crate::state::{BondRegistry, PendingDeposit, ProtocolConfig, UserPosition, YieldSource};
 
-/// Accredit transfer-hook WhitelistEntry PDA prefix: ["whitelist", wallet]
+/// Accredit transfer-hook WhitelistEntry PDA prefix: ["whitelist", registry, wallet]
 const WHITELIST_SEED: &[u8] = b"whitelist";
 /// Sovereign SovereignIdentity PDA prefix: ["identity", owner]
 const SOVEREIGN_IDENTITY_SEED: &[u8] = b"identity";
@@ -84,10 +84,14 @@ pub struct DepositCrossCurrency<'info> {
     pub pending_deposit: Account<'info, PendingDeposit>,
 
     /// Accredit WhitelistEntry PDA for this user.
-    /// CHECK: Owned by the configured KYC program at ["whitelist", user]; fields read in validate_kyc.
+    /// CHECK: Owned by the configured KYC program at ["whitelist", kyc_whitelist_registry, user]; fields read in validate_kyc.
     #[account(
         owner = protocol_config.kyc_registry @ StablebondError::KycRequired,
-        seeds = [WHITELIST_SEED, user.key().as_ref()],
+        seeds = [
+            WHITELIST_SEED,
+            protocol_config.kyc_whitelist_registry.as_ref(),
+            user.key().as_ref()
+        ],
         bump,
         seeds::program = protocol_config.kyc_registry,
     )]
@@ -162,10 +166,14 @@ pub struct DepositDirect<'info> {
     pub user_position: Box<Account<'info, UserPosition>>,
 
     /// Accredit WhitelistEntry PDA
-    /// CHECK: Owned by the configured KYC program at ["whitelist", user]; fields read in validate_kyc.
+    /// CHECK: Owned by the configured KYC program at ["whitelist", kyc_whitelist_registry, user]; fields read in validate_kyc.
     #[account(
         owner = protocol_config.kyc_registry @ StablebondError::KycRequired,
-        seeds = [WHITELIST_SEED, user.key().as_ref()],
+        seeds = [
+            WHITELIST_SEED,
+            protocol_config.kyc_whitelist_registry.as_ref(),
+            user.key().as_ref()
+        ],
         bump,
         seeds::program = protocol_config.kyc_registry,
     )]
