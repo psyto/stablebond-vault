@@ -17,8 +17,11 @@ const MAX_ORACLE_STALENESS: i64 = 300; // 5 minutes
 
 #[derive(Accounts)]
 pub struct ExecuteConversion<'info> {
-    /// Keeper that triggers the conversion
-    #[account(mut)]
+    /// Keeper that triggers the conversion (the protocol authority)
+    #[account(
+        mut,
+        constraint = keeper.key() == protocol_config.authority @ StablebondError::Unauthorized,
+    )]
     pub keeper: Signer<'info>,
 
     #[account(

@@ -6,6 +6,11 @@ use crate::errors::StablebondError;
 use crate::events::{DepositInitiated, DirectDeposit};
 use crate::state::{PendingDeposit, ProtocolConfig, UserPosition, YieldSource};
 
+/// Accredit transfer-hook WhitelistEntry PDA prefix: ["whitelist", wallet]
+const WHITELIST_SEED: &[u8] = b"whitelist";
+/// Sovereign SovereignIdentity PDA prefix: ["identity", owner]
+const SOVEREIGN_IDENTITY_SEED: &[u8] = b"identity";
+
 // ─── Generalized Deposit (cross-currency, creates PendingDeposit) ───────────
 
 #[derive(Accounts)]
@@ -22,18 +27,24 @@ pub struct DepositCrossCurrency<'info> {
     pub protocol_config: Account<'info, ProtocolConfig>,
 
     /// Source currency mint (e.g. JPY, MXN, BRL stablecoin)
-    /// CHECK: Validated in transfer
+    /// CHECK: Both token accounts below are constrained to this mint.
     pub source_mint: AccountInfo<'info>,
 
     /// User's source currency token account
-    /// CHECK: Validated in transfer
-    #[account(mut)]
-    pub user_source_ata: AccountInfo<'info>,
+    #[account(
+        mut,
+        token::mint = source_mint,
+        token::authority = user,
+    )]
+    pub user_source_ata: Box<Account<'info, TokenAccount>>,
 
-    /// Protocol vault for the source currency
-    /// CHECK: Validated via constraint
-    #[account(mut)]
-    pub source_vault: AccountInfo<'info>,
+    /// Protocol vault for the source currency (held by the protocol config PDA)
+    #[account(
+        mut,
+        token::mint = source_mint,
+        token::authority = protocol_config,
+    )]
+    pub source_vault: Box<Account<'info, TokenAccount>>,
 
     #[account(
         init_if_needed,
@@ -64,16 +75,26 @@ pub struct DepositCrossCurrency<'info> {
     pub pending_deposit: Account<'info, PendingDeposit>,
 
     /// Accredit WhitelistEntry PDA for this user.
-    /// CHECK: Manually deserialized and validated.
+    /// CHECK: Owned by the configured KYC program at ["whitelist", user]; fields read in validate_kyc.
+    #[account(
+        owner = protocol_config.kyc_registry @ StablebondError::KycRequired,
+        seeds = [WHITELIST_SEED, user.key().as_ref()],
+        bump,
+        seeds::program = protocol_config.kyc_registry,
+    )]
     pub whitelist_entry: AccountInfo<'info>,
 
     /// Sovereign Identity PDA for this user.
-    /// CHECK: Manually deserialized to extract tier.
+    /// CHECK: Owned by the configured Sovereign program at ["identity", user]; tier read in read_sovereign_tier.
+    #[account(
+        owner = protocol_config.sovereign_program @ StablebondError::SovereignIdentityNotFound,
+        seeds = [SOVEREIGN_IDENTITY_SEED, user.key().as_ref()],
+        bump,
+        seeds::program = protocol_config.sovereign_program,
+    )]
     pub sovereign_identity: AccountInfo<'info>,
 
-    /// Token program for the source currency transfer
-    /// CHECK: Program ID check
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 
     pub system_program: Program<'info, System>,
 }
@@ -132,11 +153,23 @@ pub struct DepositDirect<'info> {
     pub user_position: Box<Account<'info, UserPosition>>,
 
     /// Accredit WhitelistEntry PDA
-    /// CHECK: Manually validated
+    /// CHECK: Owned by the configured KYC program at ["whitelist", user]; fields read in validate_kyc.
+    #[account(
+        owner = protocol_config.kyc_registry @ StablebondError::KycRequired,
+        seeds = [WHITELIST_SEED, user.key().as_ref()],
+        bump,
+        seeds::program = protocol_config.kyc_registry,
+    )]
     pub whitelist_entry: AccountInfo<'info>,
 
     /// Sovereign Identity PDA
-    /// CHECK: Manually validated
+    /// CHECK: Owned by the configured Sovereign program at ["identity", user]; tier read in read_sovereign_tier.
+    #[account(
+        owner = protocol_config.sovereign_program @ StablebondError::SovereignIdentityNotFound,
+        seeds = [SOVEREIGN_IDENTITY_SEED, user.key().as_ref()],
+        bump,
+        seeds::program = protocol_config.sovereign_program,
+    )]
     pub sovereign_identity: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token>,
@@ -229,34 +262,16 @@ pub fn handle_deposit_cross_currency(
     require!(new_monthly <= limit, StablebondError::MonthlyLimitExceeded);
 
     // 4. Transfer source currency from user to vault
-    let transfer_ix = anchor_lang::solana_program::instruction::Instruction {
-        program_id: ctx.accounts.token_program.key(),
-        accounts: vec![
-            anchor_lang::solana_program::instruction::AccountMeta::new(
-                ctx.accounts.user_source_ata.key(), false,
-            ),
-            anchor_lang::solana_program::instruction::AccountMeta::new(
-                ctx.accounts.source_vault.key(), false,
-            ),
-            anchor_lang::solana_program::instruction::AccountMeta::new_readonly(
-                ctx.accounts.user.key(), true,
-            ),
-        ],
-        data: {
-            // SPL Token transfer instruction data: [3] + [amount as le bytes]
-            let mut data = vec![3u8];
-            data.extend_from_slice(&amount.to_le_bytes());
-            data
-        },
-    };
-    anchor_lang::solana_program::program::invoke(
-        &transfer_ix,
-        &[
-            ctx.accounts.user_source_ata.to_account_info(),
-            ctx.accounts.source_vault.to_account_info(),
-            ctx.accounts.user.to_account_info(),
+    token::transfer(
+        CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
-        ],
+            Transfer {
+                from: ctx.accounts.user_source_ata.to_account_info(),
+                to: ctx.accounts.source_vault.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+            },
+        ),
+        amount,
     )?;
 
     // 5. Init PendingDeposit

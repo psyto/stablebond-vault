@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 use crate::errors::StablebondError;
 use crate::events::NavUpdated;
 use crate::state::{ProtocolConfig, YieldSource};
+use stablebond_yield::state::BondVault;
 
 /// Reads the BondVault's NAV per share.
 /// BondVault layout after 8-byte discriminator:
@@ -15,7 +16,10 @@ const BOND_VAULT_APY_OFFSET: usize = 8 + 32 + 32 + 32 + 32 + 1 + 2 + 8;
 
 #[derive(Accounts)]
 pub struct UpdateNav<'info> {
-    /// Keeper that triggers the NAV update
+    /// Keeper that triggers the NAV update (the protocol authority)
+    #[account(
+        constraint = keeper.key() == protocol_config.authority @ StablebondError::Unauthorized,
+    )]
     pub keeper: Signer<'info>,
 
     #[account(
@@ -36,8 +40,19 @@ pub struct UpdateNav<'info> {
     )]
     pub yield_source: Account<'info, YieldSource>,
 
-    /// The BondVault account to read NAV from
-    /// CHECK: Manually deserialized
+    /// The BondVault account to read NAV from: the stablebond-yield vault the
+    /// protocol authority opened for this yield source's bond type.
+    /// CHECK: Owner and PDA pinned below; fields manually deserialized.
+    #[account(
+        owner = stablebond_yield::ID @ StablebondError::InvalidAccountData,
+        seeds = [
+            BondVault::SEED,
+            protocol_config.authority.as_ref(),
+            &[yield_source.bond_type.as_u8()],
+        ],
+        bump,
+        seeds::program = stablebond_yield::ID,
+    )]
     pub bond_vault_config: AccountInfo<'info>,
 }
 
